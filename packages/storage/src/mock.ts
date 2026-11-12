@@ -33,9 +33,26 @@ export class MockObjectStorage implements ObjectStorage {
 	readonly calls: string[] = [];
 
 	private counter = 0;
+	/** Lỗi ép mọi thao tác thất bại (dùng để test hành vi khi hạ tầng lỗi). */
+	private forcedError: Error | null = null;
+
+	/** Ép mọi thao tác storage ném lỗi này (mô phỏng B2 hỏng / circuit mở). */
+	failWith(error: Error): void {
+		this.forcedError = error;
+	}
+
+	/** Bỏ ép lỗi. */
+	clearFailure(): void {
+		this.forcedError = null;
+	}
+
+	private failIfForced(): void {
+		if (this.forcedError) throw this.forcedError;
+	}
 
 	async presignPut(request: PresignPutRequest): Promise<PresignedTarget> {
 		this.calls.push('presignPut');
+		this.failIfForced();
 		const expiresIn = request.expiresInSeconds ?? 300;
 		return {
 			url: `https://mock.invalid/put/${encodeURIComponent(request.key)}`,
@@ -47,6 +64,7 @@ export class MockObjectStorage implements ObjectStorage {
 
 	async presignUploadPart(request: PresignPartRequest): Promise<PresignedTarget> {
 		this.calls.push('presignUploadPart');
+		this.failIfForced();
 		const expiresIn = request.expiresInSeconds ?? 300;
 		return {
 			url: `https://mock.invalid/part/${encodeURIComponent(request.key)}/${request.partNumber}`,
@@ -58,6 +76,7 @@ export class MockObjectStorage implements ObjectStorage {
 
 	async presignGet(request: { key: string; expiresInSeconds?: number }): Promise<PresignedTarget> {
 		this.calls.push('presignGet');
+		this.failIfForced();
 		const expiresIn = request.expiresInSeconds ?? 300;
 		return {
 			url: `https://mock.invalid/get/${encodeURIComponent(request.key)}`,
@@ -69,6 +88,7 @@ export class MockObjectStorage implements ObjectStorage {
 
 	async createMultipartUpload(request: { key: string; contentType: string }): Promise<{ uploadId: string }> {
 		this.calls.push('createMultipartUpload');
+		this.failIfForced();
 		this.counter += 1;
 		const uploadId = `mock-upload-${this.counter}`;
 		this.multiparts.set(uploadId, { uploadId, key: request.key, parts: new Map() });
@@ -114,6 +134,7 @@ export class MockObjectStorage implements ObjectStorage {
 		parts: MultipartPart[];
 	}): Promise<{ etag: string | null; size: number | null }> {
 		this.calls.push('completeMultipartUpload');
+		this.failIfForced();
 		const multipart = this.multiparts.get(request.uploadId);
 		if (!multipart) throw new Error(`unknown uploadId ${request.uploadId}`);
 		const missing = request.parts.filter((part) => !multipart.parts.has(part.partNumber));
@@ -135,11 +156,13 @@ export class MockObjectStorage implements ObjectStorage {
 
 	async abortMultipartUpload(request: { key: string; uploadId: string }): Promise<void> {
 		this.calls.push('abortMultipartUpload');
+		this.failIfForced();
 		this.multiparts.delete(request.uploadId);
 	}
 
 	async listParts(request: { key: string; uploadId: string }): Promise<MultipartPart[]> {
 		this.calls.push('listParts');
+		this.failIfForced();
 		const multipart = this.multiparts.get(request.uploadId);
 		if (!multipart) return [];
 		return [...multipart.parts.entries()]
@@ -149,6 +172,7 @@ export class MockObjectStorage implements ObjectStorage {
 
 	async headObject(key: string): Promise<ObjectStat | null> {
 		this.calls.push('headObject');
+		this.failIfForced();
 		const object = this.objects.get(key);
 		if (!object) return null;
 		return {
@@ -162,6 +186,7 @@ export class MockObjectStorage implements ObjectStorage {
 
 	async getObject(key: string, range?: string): Promise<Response> {
 		this.calls.push('getObject');
+		this.failIfForced();
 		const object = this.objects.get(key);
 		if (!object) return new Response('not found', { status: 404 });
 
@@ -211,11 +236,13 @@ export class MockObjectStorage implements ObjectStorage {
 
 	async deleteObject(key: string): Promise<void> {
 		this.calls.push('deleteObject');
+		this.failIfForced();
 		this.objects.delete(key);
 	}
 
 	async listObjectVersions(key: string): Promise<ObjectVersion[]> {
 		this.calls.push('listObjectVersions');
+		this.failIfForced();
 		const object = this.objects.get(key);
 		if (!object) return [];
 		return [{ versionId: 'mock-version-1', isLatest: true, isDeleteMarker: false }];
@@ -223,6 +250,7 @@ export class MockObjectStorage implements ObjectStorage {
 
 	async deleteObjectVersion(key: string, versionId: string): Promise<void> {
 		this.calls.push('deleteObjectVersion');
+		this.failIfForced();
 		if (this.objects.has(key)) this.objects.delete(key);
 	}
 
@@ -232,6 +260,7 @@ export class MockObjectStorage implements ObjectStorage {
 		maxKeys?: number;
 	} = {}): Promise<ListObjectsResult> {
 		this.calls.push('listObjects');
+		this.failIfForced();
 		const prefix = request.prefix ?? '';
 		const all = [...this.objects.entries()]
 			.filter(([key]) => key.startsWith(prefix))

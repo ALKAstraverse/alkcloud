@@ -1,4 +1,5 @@
 import { AppError, isAppError, sha256Hex } from '@alkcloud/core';
+import { StorageError } from '@alkcloud/storage';
 import type { Context } from 'hono';
 import { redactValue } from './redact.js';
 
@@ -36,6 +37,30 @@ export function errorResponse(error: unknown): Response {
 			error.headers ?? {},
 		);
 	}
+	// Lỗi lưu trữ (B2) hoặc circuit đang mở ⇒ 503 + `Retry-After` để client
+	// biết đây là lỗi TẠM THỜI và có thể thử lại (không phải lỗi của client).
+	// Không lộ message gốc (có thể chứa endpoint/chi tiết hạ tầng).
+	if (error instanceof StorageError) {
+		console.error(
+			JSON.stringify({
+				event: 'storage_error',
+				at: new Date().toISOString(),
+				status: error.status ?? null,
+				code: error.code ?? null,
+				error: redactValue(error),
+			}),
+		);
+		const retryAfter =
+			error.code === 'circuit_open' && 'retryAfterSeconds' in error
+				? String((error as { retryAfterSeconds: number }).retryAfterSeconds)
+				: '5';
+		return json(
+			{ error: { code: 'storage_unavailable', message: 'Dịch vụ lưu trữ tạm thời không khả dụng' } },
+			503,
+			{ 'retry-after': retryAfter },
+		);
+	}
+
 	// Lỗi nội bộ (SQL, B2, runtime) KHÔNG được lộ message ra client —
 	// message có thể chứa tên bảng, tên cột, endpoint hoặc chi tiết hạ tầng.
 	// Chi tiết đầy đủ đã được ghi vào audit log / Workers Logs.

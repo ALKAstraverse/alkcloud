@@ -1,7 +1,7 @@
 import type { Env } from './env.js';
 import { resolveConfig } from './env.js';
 import { D1Driver, Database } from '@alkcloud/db';
-import { B2Storage } from '@alkcloud/storage';
+import { B2Storage, ResilientStorage } from '@alkcloud/storage';
 import { createApp } from './app.js';
 import { warmUpSchemas } from '@alkcloud/core';
 import { NotConfiguredStorage } from './lib/not-configured-storage.js';
@@ -15,7 +15,11 @@ function createStorage(env: Env) {
 	if (!endpoint || !region || !bucket || !accessKeyId || !secretAccessKey) {
 		return new NotConfiguredStorage();
 	}
-	return new B2Storage({ endpoint, region, bucket, accessKeyId, secretAccessKey });
+	// WS-B: bọc retry + circuit breaker ⇒ lỗi tạm thời của B2 không làm hỏng
+	// phiên upload/download, và khi B2 đang chết thì fail-fast thay vì treo.
+	return new ResilientStorage(
+		new B2Storage({ endpoint, region, bucket, accessKeyId, secretAccessKey }),
+	);
 }
 
 // Zod 4 compile lazy — ép compile lúc startup để không trừ CPU của request
