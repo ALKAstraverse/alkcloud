@@ -6,7 +6,6 @@ import {
 	evaluateQuota,
 	initialQuotaState,
 	msFromIso,
-	nowIso,
 	TRASH_RETENTION_DAYS,
 	utcDateKey,
 } from '@alkcloud/core';
@@ -17,6 +16,7 @@ import { sweepAllLimiters } from '@alkcloud/auth';
 import type { Env, ResolvedConfig } from '../env.js';
 import { readQuotaState, writeQuotaState } from '../context.js';
 import { recordAudit } from './audit.js';
+import { EVENTS, error as logError, info as logInfo } from './observability.js';
 
 export interface ScheduledDeps {
 	db: Database;
@@ -33,12 +33,42 @@ export interface ScheduledDeps {
  *   tác vụ nền (cleanup/purge) — không cleanup upload session/multipart đang mở.
  */
 export async function runScheduledTasks(deps: ScheduledDeps): Promise<void> {
+	const startedAt = Date.now();
+	try {
+		await runScheduledTasksInner(deps, startedAt);
+	} catch (caught) {
+		// Cron hỏng KHÔNG được im lặng: ghi log có cấu trúc + heartbeat `error`
+		// để owner thấy ngay qua `GET /system/diagnostics`.
+		logError(EVENTS.cronFailed, {
+			durationMs: Date.now() - startedAt,
+			errorName: caught instanceof Error ? caught.name : 'unknown',
+			errorCode: caught instanceof Error ? (caught as { code?: string }).code : undefined,
+		});
+		try {
+			await deps.db.setHealthHeartbeat({
+				status: 'error',
+				updatedAt: new Date().toISOString(),
+				data: {
+					errorName: caught instanceof Error ? caught.name : 'unknown',
+					durationMs: Date.now() - startedAt,
+				},
+			});
+		} catch {
+			// Không ghi được heartbeat thì không ghi thêm log (tránh loop).
+		}
+		throw caught;
+	}
+}
+
+async function runScheduledTasksInner(deps: ScheduledDeps, startedAt: number): Promise<void> {
 	const { db, config, scheduledTime } = deps;
 	const state = await readQuotaState(db, config.quotaStateTtlSeconds, scheduledTime);
 	const mode = state?.mode ?? 'NORMAL';
 
 	// 1. Dọn session/idempotency hết hạn (an toàn kể cả khi degraded).
-	const now = nowIso();
+	// Dùng `scheduledTime` (mốc cron được Cloudflare giao) làm "hiện tại" —
+	// nhất quán với phần còn lại của cron và giúp test có đồng hồ cố định.
+	const now = new Date(scheduledTime).toISOString();
 	await db.deleteExpiredSessions(now);
 	await db.deleteExpiredIdempotency(now);
 
@@ -155,8 +185,36 @@ export async function runScheduledTasks(deps: ScheduledDeps): Promise<void> {
 				targetId: 'quota',
 				metadata: { from: state?.mode ?? 'NORMAL', to: next.mode, reason: next.reason },
 			});
+			logInfo(EVENTS.quotaModeChanged, { from: state?.mode ?? 'NORMAL', to: next.mode });
 		}
 	}
+
+	// 5. Heartbeat sức khoẻ (WS-K) — 1 dòng trong D1, UPSERT.
+	//    Cho owner biết cron có chạy không mà không cần đào Workers Logs (3 ngày).
+	await db.setHealthHeartbeat({
+		status: 'ok',
+		updatedAt: new Date(scheduledTime).toISOString(),
+		data: {
+			durationMs: Date.now() - startedAt,
+			mode: next.mode,
+			quotaDataAvailable: snapshot.dataAvailable,
+			accountRequestsUsed: snapshot.accountRequestsUsed,
+			accountRequestLimit: snapshot.accountRequestLimit,
+			alkApiCallsUsed: snapshot.alkApiCallsUsed,
+			alkApiBudget: snapshot.alkApiBudget,
+			consecutiveBelow: next.consecutiveBelow,
+			storageCircuit: storageCircuitState(deps.storage),
+		},
+	});
+}
+
+/**
+ * Trạng thái circuit breaker của lớp lưu trữ (null nếu adapter không có).
+ * Cho phép owner thấy "B2 đang chết" mà không cần đọc log.
+ */
+function storageCircuitState(storage: unknown): string | null {
+	const candidate = storage as { getCircuitState?: () => string };
+	return typeof candidate.getCircuitState === 'function' ? candidate.getCircuitState() : null;
 }
 
 interface QuotaSnapshotInput {

@@ -1090,6 +1090,57 @@ export class Database {
 		return row ? (JSON.parse(str(row.value)) as T) : null;
 	}
 
+	// ------------------------------------------------------- system health (WS-K)
+	/**
+	 * Ghi heartbeat sức khoẻ hệ thống (1 dòng, UPSERT).
+	 *
+	 * Workers Free không có metrics bền vững (log chỉ 3 ngày) ⇒ heartbeat trong
+	 * D1 là nguồn sự thật duy nhất để biết cron có chạy không.
+	 */
+	async setHealthHeartbeat(heartbeat: {
+		status: string;
+		updatedAt: string;
+		data: Record<string, unknown>;
+	}): Promise<void> {
+		await this.driver.run(
+			`INSERT INTO system_health (key, updated_at, status, data, version)
+			 VALUES ('heartbeat', ?, ?, ?, 1)
+			 ON CONFLICT(key) DO UPDATE SET
+			   updated_at = excluded.updated_at,
+			   status = excluded.status,
+			   data = excluded.data,
+			   version = system_health.version + 1`,
+			[heartbeat.updatedAt, heartbeat.status, JSON.stringify(heartbeat.data)],
+		);
+	}
+
+	/** Đọc heartbeat sức khoẻ (null = chưa có cron nào chạy thành công). */
+	async getHealthHeartbeat(): Promise<{
+		status: string;
+		updatedAt: string;
+		data: Record<string, unknown>;
+		version: number;
+	} | null> {
+		const result = await this.driver.query(
+			'SELECT status, updated_at, data, version FROM system_health WHERE key = ?',
+			['heartbeat'],
+		);
+		const row = result.rows[0];
+		if (!row) return null;
+		let data: Record<string, unknown> = {};
+		try {
+			data = JSON.parse(str(row.data)) as Record<string, unknown>;
+		} catch {
+			data = {};
+		}
+		return {
+			status: str(row.status),
+			updatedAt: str(row.updated_at),
+			data,
+			version: Number(row.version ?? 0),
+		};
+	}
+
 	async setSystemState(key: string, value: unknown, now: string): Promise<void> {
 		await this.driver.run(
 			`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, ?)

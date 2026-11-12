@@ -2,6 +2,7 @@ import { AppError, isAppError, sha256Hex } from '@alkcloud/core';
 import { StorageError } from '@alkcloud/storage';
 import type { Context } from 'hono';
 import { redactValue } from './redact.js';
+import { EVENTS, error as logError } from './observability.js';
 
 export function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
 	return new Response(JSON.stringify(body), {
@@ -41,15 +42,12 @@ export function errorResponse(error: unknown): Response {
 	// biết đây là lỗi TẠM THỜI và có thể thử lại (không phải lỗi của client).
 	// Không lộ message gốc (có thể chứa endpoint/chi tiết hạ tầng).
 	if (error instanceof StorageError) {
-		console.error(
-			JSON.stringify({
-				event: 'storage_error',
-				at: new Date().toISOString(),
-				status: error.status ?? null,
-				code: error.code ?? null,
-				error: redactValue(error),
-			}),
-		);
+		logError(EVENTS.storageError, {
+			status: error.status ?? undefined,
+			errorCode: error.code ?? undefined,
+			errorName: error.name,
+			error: redactValue(error),
+		});
 		const retryAfter =
 			error.code === 'circuit_open' && 'retryAfterSeconds' in error
 				? String((error as { retryAfterSeconds: number }).retryAfterSeconds)
@@ -66,13 +64,10 @@ export function errorResponse(error: unknown): Response {
 	// Chi tiết đầy đủ đã được ghi vào audit log / Workers Logs.
 	// Log phải đi qua `redactValue` ⇒ URL ký S3, Bearer token, cookie không lọt
 	// vào Workers Logs (retention 3 ngày, ai có quyền account cũng đọc được).
-	console.error(
-		JSON.stringify({
-			event: 'unhandled_error',
-			at: new Date().toISOString(),
-			error: redactValue(error),
-		}),
-	);
+	logError(EVENTS.requestFailed, {
+		errorName: error instanceof Error ? error.name : 'unknown',
+		error: redactValue(error),
+	});
 	return json({ error: { code: 'internal_error', message: 'Lỗi nội bộ' } }, 500);
 }
 

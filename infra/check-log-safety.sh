@@ -19,13 +19,28 @@ fail() { printf '  \033[31m✗\033[0m %s\n' "$1" >&2; FAIL=$((FAIL + 1)); }
 
 SRC_DIRS=(apps/api/src apps/web/src packages/core/src packages/db/src packages/storage/src packages/auth/src)
 
-echo "── 1. Không log bằng console.log/info/debug trong mã runtime ──"
-HITS="$(grep -rnE "console\.(log|info|debug)\(" "${SRC_DIRS[@]}" 2>/dev/null || true)"
+echo "── 1. console.log/info/debug chỉ được ở module observability ──"
+# WS-K: log có cấu trúc là 1 JSON object trên 1 dòng. Để giữ đảm bảo "mọi dòng
+# log đều có cấu trúc", `console.log` bị GIỚI HẠN ở đúng 1 file
+# (apps/api/src/lib/observability.ts) — nơi duy nhất được phép log.
+HITS="$(grep -rnE "console\.(log|info|debug)\(" "${SRC_DIRS[@]}" 2>/dev/null | grep -v "^apps/api/src/lib/observability.ts:" || true)"
 if [ -n "$HITS" ]; then
-  fail "có console.log/info/debug trong mã runtime:"
+  fail "có console.log/info/debug ngoài module observability:"
   printf '%s\n' "$HITS" >&2
 else
-  pass "không có console.log/info/debug"
+  pass "console.log chỉ ở apps/api/src/lib/observability.ts"
+fi
+
+if grep -q "JSON.stringify" apps/api/src/lib/observability.ts 2>/dev/null; then
+  pass "observability.ts log bằng JSON.stringify"
+else
+  fail "observability.ts phải log bằng JSON.stringify"
+fi
+
+if grep -q "redactValue" apps/api/src/lib/observability.ts 2>/dev/null; then
+  pass "observability.ts redact giá trị trước khi log"
+else
+  fail "observability.ts phải redactValue trước khi log"
 fi
 
 echo "── 2. console.error phải có cấu trúc (JSON.stringify) ──"

@@ -6,6 +6,7 @@ import { createApp } from './app.js';
 import { warmUpSchemas } from '@alkcloud/core';
 import { NotConfiguredStorage } from './lib/not-configured-storage.js';
 import { runScheduledTasks } from './lib/scheduled.js';
+import { EVENTS, error as logError, warn as logWarn } from './lib/observability.js';
 import type { AppEnv } from './middleware/auth.js';
 import type { Hono } from 'hono';
 
@@ -19,6 +20,35 @@ function createStorage(env: Env) {
 	// phiên upload/download, và khi B2 đang chết thì fail-fast thay vì treo.
 	return new ResilientStorage(
 		new B2Storage({ endpoint, region, bucket, accessKeyId, secretAccessKey }),
+		{
+			// WS-K: lớp lưu trữ không tự log (giữ package độc lập) — nó phát sự
+			// kiện, app nối vào hệ thống log có cấu trúc + redact.
+			onEvent: (event) => {
+				if (event.type === 'retry') {
+					logWarn(EVENTS.storageRetry, {
+						operation: event.operation,
+						attempt: event.attempt,
+						delayMs: event.delayMs,
+						errorName: event.errorName,
+						status: event.status,
+					});
+					return;
+				}
+				if (event.type === 'circuit_open') {
+					logError(EVENTS.storageCircuitOpen, {
+						operation: event.operation,
+						attempt: event.attempt,
+					});
+					return;
+				}
+				logError(EVENTS.storageError, {
+					operation: event.operation,
+					attempt: event.attempt,
+					errorName: event.errorName,
+					status: event.status,
+				});
+			},
+		},
 	);
 }
 

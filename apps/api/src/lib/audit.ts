@@ -1,6 +1,7 @@
 import type { AuditAction, AuditSeverity } from '@alkcloud/core';
 import type { AppContext } from '../context.js';
 import { redactValue } from './redact.js';
+import { EVENTS, error as logError } from './observability.js';
 
 /**
  * Phân loại severity. Sự kiện mức `security` và `data_change` LUÔN được ghi,
@@ -77,18 +78,15 @@ export async function recordAudit(
 		// Fallback: ghi JSON có cấu trúc ra Workers Logs (retention 3 ngày) để
 		// không mất hoàn toàn dấu vết, đồng thời KHÔNG log secret.
 		// Mọi giá trị đi qua `redactValue` ⇒ token/pepper/signature không lọt log.
-		console.error(
-			JSON.stringify({
-				event: 'audit.fallback',
-				severity: entry.severity,
-				action: entry.action,
-				actor: entry.actor,
-				targetType: entry.targetType,
-				targetId: entry.targetId,
-				ip: entry.ip,
-				createdAt: entry.now,
-				error: redactValue(error),
-			}),
-		);
+		logError(EVENTS.auditFallback, {
+			severity: entry.severity,
+			action: entry.action,
+			actor: entry.actor,
+			targetType: entry.targetType,
+			targetId: entry.targetId,
+			ip: entry.ip,
+			createdAt: entry.now,
+			error: redactValue(error),
+		});
 	}
 }

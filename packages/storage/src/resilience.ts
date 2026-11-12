@@ -186,6 +186,23 @@ export function backoffDelayMs(attempt: number, policy: RetryPolicy, random: () 
 	return Math.floor(capped * (0.5 + random() * 0.5));
 }
 
+/**
+ * Sự kiện observability của lớp lưu trữ (WS-K).
+ *
+ * Gói `packages/storage` cố tình **không** phụ thuộc vào tầng ứng dụng ⇒ không
+ * tự log. Thay vào đó nó phát sự kiện qua callback, để app nối vào hệ thống log
+ * có cấu trúc (redact + catalog) của mình.
+ */
+export interface StorageEvent {
+	type: 'retry' | 'circuit_open' | 'failure';
+	/** Tên thao tác (không chứa key object — key có thể chứa định danh người dùng). */
+	operation: string;
+	attempt?: number;
+	delayMs?: number;
+	errorName?: string;
+	status?: number;
+}
+
 export interface ResilienceOptions {
 	retry?: RetryPolicy;
 	circuit?: CircuitBreakerOptions;
@@ -194,6 +211,8 @@ export interface ResilienceOptions {
 	now?: () => number;
 	sleep?: (ms: number) => Promise<void>;
 	random?: () => number;
+	/** Nhận sự kiện retry / circuit-open / failure (WS-K). */
+	onEvent?: (event: StorageEvent) => void;
 }
 
 /**
@@ -206,6 +225,7 @@ export class ResilientStorage implements ObjectStorage {
 	private readonly breaker: CircuitBreaker;
 	private readonly sleep: (ms: number) => Promise<void>;
 	private readonly random: () => number;
+	private readonly onEvent: ((event: StorageEvent) => void) | undefined;
 	/** Thống kê để test + observability. */
 	readonly stats = { attempts: 0, retries: 0, circuitOpens: 0, failures: 0 };
 
@@ -222,6 +242,17 @@ export class ResilientStorage implements ObjectStorage {
 			});
 		this.sleep = options.sleep ?? defaultSleep;
 		this.random = options.random ?? Math.random;
+		this.onEvent = options.onEvent;
+	}
+
+	/** Phát sự kiện observability (không để lỗi callback làm hỏng request). */
+	private emitEvent(event: StorageEvent): void {
+		if (!this.onEvent) return;
+		try {
+			this.onEvent(event);
+		} catch {
+			// Callback hỏng không được làm hỏng thao tác lưu trữ.
+		}
 	}
 
 	getCircuitState(): CircuitState {
@@ -229,7 +260,7 @@ export class ResilientStorage implements ObjectStorage {
 	}
 
 	/** Chạy 1 thao tác idempotent với retry + circuit breaker. */
-	private async withResilience<T>(operation: () => Promise<T>): Promise<T> {
+	private async withResilience<T>(operation: () => Promise<T>, operationName = 'unknown'): Promise<T> {
 		let lastError: unknown;
 		let spentDelay = 0;
 
@@ -242,6 +273,12 @@ export class ResilientStorage implements ObjectStorage {
 				this.stats.failures += 1;
 				if (error instanceof CircuitOpenError) {
 					this.stats.circuitOpens += 1;
+					this.emitEvent({
+						type: 'circuit_open',
+						operation: operationName,
+						attempt,
+						errorName: error.name,
+					});
 					throw error;
 				}
 				if (attempt >= this.policy.maxAttempts) break;
@@ -251,9 +288,24 @@ export class ResilientStorage implements ObjectStorage {
 				if (spentDelay + delay > this.policy.totalDelayBudgetMs) break;
 				spentDelay += delay;
 				this.stats.retries += 1;
+				this.emitEvent({
+					type: 'retry',
+					operation: operationName,
+					attempt,
+					delayMs: delay,
+					errorName: error instanceof Error ? error.name : 'unknown',
+					status: error instanceof StorageError ? error.status : undefined,
+				});
 				await this.sleep(delay);
 			}
 		}
+		this.emitEvent({
+			type: 'failure',
+			operation: operationName,
+			attempt: this.policy.maxAttempts,
+			errorName: lastError instanceof Error ? lastError.name : 'unknown',
+			status: lastError instanceof StorageError ? lastError.status : undefined,
+		});
 		throw lastError;
 	}
 
@@ -293,35 +345,35 @@ export class ResilientStorage implements ObjectStorage {
 		uploadId: string;
 		parts: MultipartPart[];
 	}): Promise<{ etag: string | null; size: number | null }> {
-		return this.withResilience(() => this.inner.completeMultipartUpload(request));
+		return this.withResilience(() => this.inner.completeMultipartUpload(request), 'completeMultipartUpload');
 	}
 
 	async abortMultipartUpload(request: { key: string; uploadId: string }): Promise<void> {
-		return this.withResilience(() => this.inner.abortMultipartUpload(request));
+		return this.withResilience(() => this.inner.abortMultipartUpload(request), 'abortMultipartUpload');
 	}
 
 	async listParts(request: { key: string; uploadId: string }): Promise<MultipartPart[]> {
-		return this.withResilience(() => this.inner.listParts(request));
+		return this.withResilience(() => this.inner.listParts(request), 'listParts');
 	}
 
 	async headObject(key: string): Promise<ObjectStat | null> {
-		return this.withResilience(() => this.inner.headObject(key));
+		return this.withResilience(() => this.inner.headObject(key), 'headObject');
 	}
 
 	async getObject(key: string, range?: string): Promise<Response> {
-		return this.withResilience(() => this.inner.getObject(key, range));
+		return this.withResilience(() => this.inner.getObject(key, range), 'getObject');
 	}
 
 	async deleteObject(key: string): Promise<void> {
-		return this.withResilience(() => this.inner.deleteObject(key));
+		return this.withResilience(() => this.inner.deleteObject(key), 'deleteObject');
 	}
 
 	async listObjectVersions(key: string): Promise<ObjectVersion[]> {
-		return this.withResilience(() => this.inner.listObjectVersions(key));
+		return this.withResilience(() => this.inner.listObjectVersions(key), 'listObjectVersions');
 	}
 
 	async deleteObjectVersion(key: string, versionId: string): Promise<void> {
-		return this.withResilience(() => this.inner.deleteObjectVersion(key, versionId));
+		return this.withResilience(() => this.inner.deleteObjectVersion(key, versionId), 'deleteObjectVersion');
 	}
 
 	async listObjects(request?: {
@@ -329,6 +381,6 @@ export class ResilientStorage implements ObjectStorage {
 		continuationToken?: string;
 		maxKeys?: number;
 	}): Promise<ListObjectsResult> {
-		return this.withResilience(() => this.inner.listObjects(request));
+		return this.withResilience(() => this.inner.listObjects(request), 'listObjects');
 	}
 }
