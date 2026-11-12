@@ -1015,13 +1015,21 @@ export class Database {
 		// SEC-10: sắp theo `seq` của audit_chain (thứ tự THẬT của chuỗi hash),
 		// không theo created_at + id (id là random ⇒ thứ tự ngẫu nhiên khi trùng
 		// milisecond ⇒ báo cáo "chain hỏng" giả).
+		//
+		// WS-G (benchmark): bản cũ `LEFT JOIN … ORDER BY COALESCE(c.seq,-1)` là
+		// đường đọc CHẬM NHẤT của API:
+		//   - `audit_chain.entry_hash` không có index ⇒ join quét O(n×m)
+		//   - `ORDER BY COALESCE(...)` là biểu thức hàm ⇒ không dùng được index
+		//     UNIQUE(seq) ⇒ phải sort toàn bộ tập kết quả.
+		// Bản mới DẪN ĐƯỜNG từ `audit_chain` (có index UNIQUE(seq)) ⇒ LIMIT N
+		// chỉ đọc N dòng chain; join ngược qua index `idx_audit_logs_entry`.
 		const result = await this.driver.query(
-			`SELECT l.* FROM audit_logs l
-			 LEFT JOIN audit_chain c ON c.entry_hash = l.entry_hash
-			 ORDER BY COALESCE(c.seq, -1) DESC, l.created_at DESC, l.id DESC LIMIT ?`,
+			`SELECT l.* FROM audit_chain c
+			 JOIN audit_logs l ON l.entry_hash = c.entry_hash
+			 ORDER BY c.seq DESC LIMIT ?`,
 			[limit],
 		);
-		return result.rows.map((row) => ({
+		const events = result.rows.map((row) => ({
 			id: str(row.id),
 			action: str(row.action) as AuditAction,
 			severity: str(row.severity) as AuditSeverity,
@@ -1032,6 +1040,33 @@ export class Database {
 			ip: nullableStr(row.ip),
 			createdAt: str(row.created_at),
 		}));
+
+		// Dòng audit KHÔNG có entry trong chain (trường hợp phòng thủ: batch ghi
+		// audit_logs + audit_chain là atomic nên hiếm, nhưng nếu xảy ra thì phải
+		// vẫn hiển thị được). Trong query cũ các dòng này có seq = -1 ⇒ nằm
+		// CUỐI danh sách. Chỉ cần hỏi thêm khi chưa đủ `limit` dòng có chain.
+		if (events.length < limit) {
+			const orphans = await this.driver.query(
+				`SELECT l.* FROM audit_logs l
+				 WHERE NOT EXISTS (SELECT 1 FROM audit_chain c WHERE c.entry_hash = l.entry_hash)
+				 ORDER BY l.created_at DESC, l.id DESC LIMIT ?`,
+				[limit - events.length],
+			);
+			for (const row of orphans.rows) {
+				events.push({
+					id: str(row.id),
+					action: str(row.action) as AuditAction,
+					severity: str(row.severity) as AuditSeverity,
+					actor: str(row.actor),
+					targetType: nullableStr(row.target_type),
+					targetId: nullableStr(row.target_id),
+					metadata: JSON.parse(str(row.metadata) || '{}') as Record<string, unknown>,
+					ip: nullableStr(row.ip),
+					createdAt: str(row.created_at),
+				});
+			}
+		}
+		return events;
 	}
 
 	// ------------------------------------------------- settings & system state

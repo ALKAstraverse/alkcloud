@@ -11,18 +11,27 @@ import { createPublicShareRoutes } from './routes/public-share.js';
 import { createSystemRoutes } from './routes/system.js';
 import { errorResponse, json } from './lib/http.js';
 import { loadQuotaState, type AppEnv } from './middleware/auth.js';
+import type { RateLimitOverrides } from './context.js';
 
 export interface AppDeps {
 	db: Database;
 	storage: ObjectStorage;
 	config: ResolvedConfig;
 	now?: () => Date;
+	/** Override policy rate limit — CHỈ dùng cho test/benchmark (xem AppContext). */
+	rateLimits?: RateLimitOverrides;
 }
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
 	const app = new Hono<AppEnv>();
 	const now = deps.now ?? (() => new Date());
-	const context = { db: deps.db, storage: deps.storage, config: deps.config, now };
+	const context = {
+		db: deps.db,
+		storage: deps.storage,
+		config: deps.config,
+		now,
+		...(deps.rateLimits ? { rateLimits: deps.rateLimits } : {}),
+	};
 
 	app.onError((error) => errorResponse(error));
 	app.notFound((c) => json({ error: { code: 'not_found', message: 'Endpoint không tồn tại' } }, 404));

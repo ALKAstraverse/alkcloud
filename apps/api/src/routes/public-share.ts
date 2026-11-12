@@ -32,9 +32,10 @@ export function createPublicShareRoutes(context: AppContext): Hono<AppEnv> {
 
 	// Limiter phải là instance-level: module-level sẽ dùng chung state giữa các
 	// app instance (và giữa các test), gây nhiễu rate-limit ngoài ý muốn.
+	const unlockPolicy = context.rateLimits?.shareUnlock ?? DEFAULT_POLICIES.shareUnlock;
 	const unlockLimiter = new MemoryRateLimiter(
-		DEFAULT_POLICIES.shareUnlock.limit,
-		DEFAULT_POLICIES.shareUnlock.windowMs,
+		unlockPolicy.limit,
+		unlockPolicy.windowMs,
 	);
 
 	const resolveShare = async (request: Request) => {

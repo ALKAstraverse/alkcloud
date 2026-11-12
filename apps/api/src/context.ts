@@ -3,11 +3,22 @@ import type { ObjectStorage } from '@alkcloud/storage';
 import type { DegradationMode, UsageState } from '@alkcloud/core';
 import type { ResolvedConfig } from './env.js';
 
+/**
+ * Override policy rate limit — CHỈ dùng cho test/benchmark.
+ *
+ * KHÔNG có đường nào trong production đọc giá trị này (env/config không ánh xạ
+ * tới) ⇒ chỉ có thể override bằng cách gọi `createApp` với deps tương ứng.
+ * Mục đích: benchmark cần đo hàng trăm lần login mà không bị limiter chặn
+ * (giữ nguyên hành vi thật của production).
+ */
+export type RateLimitOverrides = Partial<Record<string, { limit: number; windowMs: number }>>;
+
 export interface AppContext {
 	db: Database;
 	storage: ObjectStorage;
 	config: ResolvedConfig;
 	now(): Date;
+	rateLimits?: RateLimitOverrides;
 }
 
 /**

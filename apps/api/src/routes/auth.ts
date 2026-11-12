@@ -45,21 +45,25 @@ export function createAuthRoutes(context: AppContext): Hono<AppEnv> {
 	// Cloudflare Rate Limiting Rule vì isolate không chia sẻ state giữa PoP.
 	// Limiter theo IP: key KHÔNG chứa email (attacker kiểm soát email ⇒ đổi email
 	// để né limiter và rò bộ nhớ của isolate). Xem SEC-15.
-	const loginLimiter = new MemoryRateLimiter(DEFAULT_POLICIES.login.limit, DEFAULT_POLICIES.login.windowMs);
+	const loginPolicy = context.rateLimits?.login ?? DEFAULT_POLICIES.login;
+	const accountLoginPolicy = context.rateLimits?.loginAccount ?? DEFAULT_POLICIES.loginAccount;
+	const recoveryPolicy = context.rateLimits?.recoveryLogin ?? DEFAULT_POLICIES.recoveryLogin;
+	const bootstrapPolicy = context.rateLimits?.bootstrap ?? DEFAULT_POLICIES.bootstrap;
+	const loginLimiter = new MemoryRateLimiter(loginPolicy.limit, loginPolicy.windowMs);
 	// Limiter theo TÀI KHOẢN: chỉ có đúng 1 owner ⇒ đây là lớp bảo vệ duy nhất
 	// chống brute-force khi attacker xoay nhiều IP. Rộng hơn limiter theo IP
 	// để owner đổi mạng/VPN không bị chặn nhầm.
 	const accountLoginLimiter = new MemoryRateLimiter(
-		DEFAULT_POLICIES.loginAccount.limit,
-		DEFAULT_POLICIES.loginAccount.windowMs,
+		accountLoginPolicy.limit,
+		accountLoginPolicy.windowMs,
 	);
 	const recoveryLimiter = new MemoryRateLimiter(
-		DEFAULT_POLICIES.recoveryLogin.limit,
-		DEFAULT_POLICIES.recoveryLogin.windowMs,
+		recoveryPolicy.limit,
+		recoveryPolicy.windowMs,
 	);
 	const bootstrapLimiter = new MemoryRateLimiter(
-		DEFAULT_POLICIES.bootstrap.limit,
-		DEFAULT_POLICIES.bootstrap.windowMs,
+		bootstrapPolicy.limit,
+		bootstrapPolicy.windowMs,
 	);
 
 	const issueSession = async (ownerId: string, email: string, userAgent: string | null) => {

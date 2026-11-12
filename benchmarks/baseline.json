@@ -1,0 +1,45 @@
+{
+  "generatedAt": "2026-11-12T21:06:48.709Z",
+  "node": "v22.23.4",
+  "platform": "linux/arm64",
+  "budgetsUs": {
+    "GET /files (root, 50 file)": 8000,
+    "GET /system/usage": 6000,
+    "POST /uploads (presign)": 8000,
+    "GET /audit (100 events)": 8000,
+    "POST /auth/login (verify)": 6000,
+    "GET /files/:id/download (proxy)": 6000
+  },
+  "results": [
+    {
+      "name": "GET /files (root, 50 file)",
+      "meanUs": 1024.4,
+      "p95Us": 1881.7
+    },
+    {
+      "name": "GET /system/usage",
+      "meanUs": 583.1,
+      "p95Us": 722.3
+    },
+    {
+      "name": "POST /uploads (presign)",
+      "meanUs": 1462.9,
+      "p95Us": 1732
+    },
+    {
+      "name": "GET /audit (100 events)",
+      "meanUs": 1036.6,
+      "p95Us": 1385.4
+    },
+    {
+      "name": "POST /auth/login (verify)",
+      "meanUs": 838.8,
+      "p95Us": 961.7
+    },
+    {
+      "name": "GET /files/:id/download (proxy)",
+      "meanUs": 476.2,
+      "p95Us": 521.4
+    }
+  ]
+}
