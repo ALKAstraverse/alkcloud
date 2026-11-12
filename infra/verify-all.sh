@@ -59,6 +59,7 @@ run "worker limits"       ./infra/check-worker-limits.sh
 run "deployment (tĩnh)"  ./infra/check-deployment.sh
 run "log safety"          ./infra/check-log-safety.sh
 run "web client safety"   npm run --silent check:web
+run "secret scan"         ./infra/check-secrets.sh
 run "benchmark (WS-G)"    npm run --silent bench
 run "cost model (WS-H)"   npm run --silent cost
 run "quota audit"         npm run --silent audit:quota

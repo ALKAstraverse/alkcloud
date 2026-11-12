@@ -12,9 +12,12 @@ import {
 } from '@alkcloud/storage';
 import { B2Storage, extractXmlValues } from '@alkcloud/storage';
 
+// Credential giả CỐ Ý không trùng mẫu AWS doc (`AKIA...EXAMPLE`) để không bị
+// secret scanner của CI báo nhầm. SigV4 coi key là chuỗi bất kỳ ⇒ không ảnh
+// hưởng tính đúng của test.
 const CONFIG = {
-	accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
-	secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+	accessKeyId: 'TESTACCESSKEYID01',
+	secretAccessKey: 'test-secret-access-key-not-a-real-credential',
 	region: 'us-west-004',
 	service: 's3',
 };
