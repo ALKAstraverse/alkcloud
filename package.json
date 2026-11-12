@@ -13,7 +13,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test packages/core/test/*.test.ts packages/db/test/*.test.ts packages/storage/test/*.test.ts packages/auth/test/*.test.ts apps/api/test/*.test.ts",
+    "test": "node --import tsx --test packages/core/test/*.test.ts packages/db/test/*.test.ts packages/storage/test/*.test.ts packages/auth/test/*.test.ts apps/api/test/*.test.ts scripts/test/*.test.ts",
     "build:api": "npm run build -w alkcloud-api",
     "build:web": "npm run build -w alkcloud-web",
     "build": "npm run build:api && npm run build:web",
@@ -39,7 +39,8 @@
     "audit:storage": "node --import tsx scripts/audit-storage.ts",
     "reconcile:storage": "node --import tsx scripts/reconcile-storage.ts",
     "verify:backup": "node --import tsx scripts/verify-backup.ts",
-    "restore:drill": "node --import tsx scripts/restore-drill.ts"
+    "restore:drill": "node --import tsx scripts/restore-drill.ts",
+    "test:chaos": "node --import tsx --test apps/api/test/chaos.test.ts scripts/test/*.test.ts"
   },
   "devDependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",

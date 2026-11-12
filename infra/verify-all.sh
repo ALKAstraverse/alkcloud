@@ -53,11 +53,19 @@ banner "1. Kiểm tra tĩnh (không phụ thuộc tài nguyên ngoài)"
 run "typecheck"           npm run --silent typecheck
 run "unit test"           npm test
 run "security test"       npm run --silent test:security
+run "chaos test"          npm run --silent test:chaos
 run "build (api + web)"   npm run --silent build
 run "worker limits"       ./infra/check-worker-limits.sh
 run "deployment (tĩnh)"  ./infra/check-deployment.sh
 run "log safety"          ./infra/check-log-safety.sh
 run "quota audit"         npm run --silent audit:quota
+run "restore drill (local)" npm run --silent restore:drill
+BACKUP_FILE="$(ls -t backups/alkcloud-d1-*.sql 2>/dev/null | head -1 || true)"
+if [ -n "$BACKUP_FILE" ]; then
+  run "backup verify (local)" npm run --silent verify:backup -- "$BACKUP_FILE"
+else
+  mark_skip "backup verify — chưa có file backup trong backups/"
+fi
 
 # ---------------------------------------------------------------- 2. Tích hợp
 banner "2. Kiểm tra tích hợp (cần tài nguyên thật)"

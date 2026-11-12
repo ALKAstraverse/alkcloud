@@ -124,13 +124,13 @@ describe('files', () => {
 		assert.equal((await db.getFileByObjectKey('objects/fil_1/report.pdf'))?.id, 'fil_1');
 
 		await db.softDeleteFile('fil_1', 'batch_1', '2026-01-31T00:00:00.000Z', '2026-01-02T00:00:00.000Z');
-		const trashed = await db.listFiles({ folderId: null, limit: 10, offset: 0, includeDeleted: false });
+		const trashed = await db.listFiles({ folderId: null, limit: 10, offset: 0, deletedOnly: false });
 		assert.equal(trashed.length, 0);
 		const trashList = await db.listTrashFiles(10);
 		assert.equal(trashList.length, 1);
 
 		await db.restoreFile('fil_1', '2026-01-03T00:00:00.000Z');
-		const restored = await db.listFiles({ folderId: null, limit: 10, offset: 0, includeDeleted: false });
+		const restored = await db.listFiles({ folderId: null, limit: 10, offset: 0, deletedOnly: false });
 		assert.equal(restored.length, 1);
 	});
 
@@ -148,13 +148,13 @@ describe('files', () => {
 			objectKey: 'objects/fil_2/beta.png', revisionId: 'rev_2', etag: null, checksumSha256: null,
 			now: '2026-01-01T00:00:00.000Z',
 		});
-		const inFolder = await db.listFiles({ folderId: folder.id, limit: 10, offset: 0, includeDeleted: false });
+		const inFolder = await db.listFiles({ folderId: folder.id, limit: 10, offset: 0, deletedOnly: false });
 		assert.equal(inFolder.length, 1);
 		// folderId undefined = tìm kiếm toàn cục (mọi thư mục)
-		const searched = await db.listFiles({ folderId: undefined, query: 'alpha', limit: 10, offset: 0, includeDeleted: false });
+		const searched = await db.listFiles({ folderId: undefined, query: 'alpha', limit: 10, offset: 0, deletedOnly: false });
 		assert.equal(searched.length, 1);
 		// folderId null = chỉ root
-		const rootOnly = await db.listFiles({ folderId: null, limit: 10, offset: 0, includeDeleted: false });
+		const rootOnly = await db.listFiles({ folderId: null, limit: 10, offset: 0, deletedOnly: false });
 		assert.equal(rootOnly.length, 1);
 		assert.equal(rootOnly[0]?.name, 'beta.png');
 	});

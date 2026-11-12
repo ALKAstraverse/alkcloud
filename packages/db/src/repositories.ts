@@ -214,7 +214,14 @@ export interface ListFilesOptions {
 	query?: string;
 	limit: number;
 	offset: number;
-	includeDeleted: boolean;
+	/**
+	 * `false` (mặc định) => chỉ file đang hoạt động.
+	 * `true`  => CHỈ file đã xoá (trong thùng rác) — dùng cho màn hình thùng rác.
+	 *
+	 * Tên cũ `includeDeleted` gợi ý "bao gồm cả file đã xoá" (tức là cả hai nhóm),
+	 * nhưng thực tế hành vi là lọc theo nhóm ⇒ dễ dùng sai. Đã đổi tên để rõ nghĩa.
+	 */
+	deletedOnly?: boolean;
 }
 
 export class Database {
@@ -548,7 +555,7 @@ export class Database {
 			clauses.push('folder_id = ?');
 			params.push(options.folderId);
 		}
-		clauses.push(options.includeDeleted ? 'deleted_at IS NOT NULL' : 'deleted_at IS NULL');
+		clauses.push(options.deletedOnly ? 'deleted_at IS NOT NULL' : 'deleted_at IS NULL');
 		if (options.query) {
 			clauses.push('name_lower LIKE ?');
 			params.push(`%${options.query.toLowerCase()}%`);

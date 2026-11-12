@@ -23,7 +23,7 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 			query: query.q,
 			limit: query.limit,
 			offset: 0,
-			includeDeleted: query.trashed === 'true',
+			deletedOnly: query.trashed === 'true',
 		});
 		return json(
 			{
