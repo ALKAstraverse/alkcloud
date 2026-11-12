@@ -41,6 +41,7 @@
     "verify:backup": "node --import tsx scripts/verify-backup.ts",
     "restore:drill": "node --import tsx scripts/restore-drill.ts",
     "bench": "node --import tsx scripts/benchmark.ts",
+    "cost": "node --import tsx scripts/cost-model.ts",
     "test:chaos": "node --import tsx --test apps/api/test/chaos.test.ts scripts/test/*.test.ts"
   },
   "devDependencies": {
