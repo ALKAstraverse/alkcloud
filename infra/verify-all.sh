@@ -64,6 +64,7 @@ run "benchmark (WS-G)"    npm run --silent bench
 run "cost model (WS-H)"   npm run --silent cost
 run "quota audit"         npm run --silent audit:quota
 run "restore drill (local)" npm run --silent restore:drill
+run "release manifest (WS-L2)" npm run --silent release:manifest
 BACKUP_FILE="$(ls -t backups/alkcloud-d1-*.sql 2>/dev/null | head -1 || true)"
 if [ -n "$BACKUP_FILE" ]; then
   run "backup verify (local)" npm run --silent verify:backup -- "$BACKUP_FILE"

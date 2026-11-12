@@ -28,6 +28,9 @@ deploy/
 e2e-report.json
 e2e-report.md
 
+# Release manifest + artifact đóng gói (sinh tự động, không commit)
+release/
+
 # Báo cáo audit quota (sinh tự động)
 quota-audit.md
 

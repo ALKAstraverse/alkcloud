@@ -43,7 +43,9 @@
     "bench": "node --import tsx scripts/benchmark.ts",
     "cost": "node --import tsx scripts/cost-model.ts",
     "check:web": "node --import tsx scripts/check-web-client-security.ts",
-    "test:chaos": "node --import tsx --test apps/api/test/chaos.test.ts scripts/test/*.test.ts"
+    "test:chaos": "node --import tsx --test apps/api/test/chaos.test.ts scripts/test/*.test.ts",
+    "release:manifest": "node --import tsx scripts/release-manifest.ts",
+    "release:verify": "node --import tsx scripts/release-manifest.ts --verify"
   },
   "devDependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",
