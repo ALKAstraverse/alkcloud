@@ -1,0 +1,55 @@
+{
+  "name": "alkcloud",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AlkCloud — private personal cloud storage on Cloudflare Workers Free + D1 + Backblaze B2",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test packages/core/test/*.test.ts packages/db/test/*.test.ts packages/storage/test/*.test.ts packages/auth/test/*.test.ts apps/api/test/*.test.ts",
+    "build:api": "npm run build -w alkcloud-api",
+    "build:web": "npm run build -w alkcloud-web",
+    "build": "npm run build:api && npm run build:web",
+    "dev:api": "npm run dev -w alkcloud-api",
+    "dev:web": "npm run dev -w alkcloud-web",
+    "db:migrate:local": "node --import tsx scripts/migrate.ts --local",
+    "db:migrate:remote": "node --import tsx scripts/migrate.ts --remote",
+    "db:seed:local": "node --import tsx scripts/seed.ts",
+    "backup:d1": "node --import tsx scripts/backup-d1.ts",
+    "baseline": "node --import tsx scripts/baseline-cloudflare.ts",
+    "check:readiness": "./infra/check-readiness.sh",
+    "verify": "npm run typecheck && npm run test && npm run build",
+    "test:integration": "node --import tsx --test packages/storage/test/integration/*.test.ts apps/api/test/integration/*.test.ts",
+    "test:security": "node --import tsx --test apps/api/test/security.test.ts packages/auth/test/*.test.ts",
+    "db:restore": "node --import tsx scripts/restore-d1.ts",
+    "check:limits": "./infra/check-worker-limits.sh",
+    "verify:deployment": "./infra/check-deployment.sh",
+    "verify:all": "./infra/verify-all.sh",
+    "test:e2e": "node --import tsx scripts/e2e-production.ts",
+    "prepare:production": "./infra/prepare-production.sh",
+    "audit:quota": "node --import tsx scripts/quota-audit.ts"
+  },
+  "devDependencies": {
+    "@aws-crypto/sha256-js": "^5.2.0",
+    "@cloudflare/workers-types": "^5.20261112.1",
+    "@smithy/protocol-http": "^5.1.1",
+    "@smithy/signature-v4": "^5.1.1",
+    "@types/node": "22.10.2",
+    "@types/react": "19.0.2",
+    "@types/react-dom": "19.0.2",
+    "@vitejs/plugin-react": "4.3.4",
+    "aws4fetch": "^1.0.20",
+    "hash-wasm": "^4.12.0",
+    "tsx": "^4.23.15",
+    "typescript": "5.7.2",
+    "vite": "^6.4.6",
+    "wrangler": "^4.160.1"
+  }
+}

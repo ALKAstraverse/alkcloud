@@ -1,0 +1,251 @@
+import type { Database } from '@alkcloud/db';
+import type { ObjectStorage } from '@alkcloud/storage';
+import {
+	AppError,
+	DEFAULT_DAILY_API_BUDGET,
+	evaluateQuota,
+	initialQuotaState,
+	msFromIso,
+	nowIso,
+	TRASH_RETENTION_DAYS,
+	utcDateKey,
+} from '@alkcloud/core';
+import type { Env, ResolvedConfig } from '../env.js';
+import { readQuotaState, writeQuotaState } from '../context.js';
+import { recordAudit } from './audit.js';
+
+export interface ScheduledDeps {
+	db: Database;
+	storage: ObjectStorage;
+	config: ResolvedConfig;
+	env: Env;
+	scheduledTime: number;
+}
+
+/**
+ * Cron job của Worker.
+ * - Không được tạo tài nguyên mới.
+ * - Khi hệ thống đang ở mode degradation (READ_ONLY/EMERGENCY) thì BỎ QUA các
+ *   tác vụ nền (cleanup/purge) — không cleanup upload session/multipart đang mở.
+ */
+export async function runScheduledTasks(deps: ScheduledDeps): Promise<void> {
+	const { db, config, scheduledTime } = deps;
+	const state = await readQuotaState(db, config.quotaStateTtlSeconds, scheduledTime);
+	const mode = state?.mode ?? 'NORMAL';
+
+	// 1. Dọn session/idempotency hết hạn (an toàn kể cả khi degraded).
+	const now = nowIso();
+	await db.deleteExpiredSessions(now);
+	await db.deleteExpiredIdempotency(now);
+
+	// 2. Dọn upload session hết hạn + multipart tương ứng (CHỈ khi mode = NORMAL).
+	if (mode === 'NORMAL') {
+		const expired = await db.listExpiredUploadSessions(now, 50);
+		for (const session of expired) {
+			try {
+				const versions = await deps.storage.listObjectVersions(session.objectKey);
+				for (const version of versions) {
+					await deps.storage.deleteObjectVersion(session.objectKey, version.versionId);
+				}
+				await deps.storage.deleteObject(session.objectKey);
+			} catch {
+				// B2 chưa cấu hình hoặc lỗi tạm thời: giữ session, thử lại ở cron sau.
+				continue;
+			}
+			await db.setUploadSessionStatus(session.id, 'EXPIRED', now);
+			await db.releaseQuota(session.id, now);
+			await recordAudit({ db, storage: deps.storage, config, now: () => new Date(scheduledTime) }, {
+				action: 'upload.session.expire',
+				actor: 'cron',
+				targetType: 'upload_session',
+				targetId: session.id,
+			});
+		}
+	}
+
+	// 3. Purge file đã hết retention 30 ngày (CHỈ khi mode = NORMAL).
+	if (mode === 'NORMAL') {
+		const due = await db.listFilesDueForPurge(now, 20);
+		for (const file of due) {
+			const activeShares = await db.countActiveShares(file.id, now);
+			if (activeShares > 0) continue;
+			try {
+				const versions = await deps.storage.listObjectVersions(file.objectKey);
+				for (const version of versions) {
+					await deps.storage.deleteObjectVersion(file.objectKey, version.versionId);
+				}
+				if (versions.length === 0) await deps.storage.deleteObject(file.objectKey);
+			} catch {
+				continue;
+			}
+			await db.deleteFileRow(file.id);
+			await recordAudit({ db, storage: deps.storage, config, now: () => new Date(scheduledTime) }, {
+				action: 'file.purge',
+				actor: 'cron',
+				targetType: 'file',
+				targetId: file.id,
+				metadata: { objectKey: file.objectKey, reason: 'retention_expired' },
+			});
+		}
+		const folderCutoff = new Date(new Date(now).getTime() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+		await db.purgeDeletedFolders(folderCutoff);
+	}
+
+	// 4. Cập nhật trạng thái quota nếu có dữ liệu analytics (token chưa cấu hình => giữ nguyên mode).
+	const snapshot = await collectQuotaSnapshot(deps, state, scheduledTime);
+	const next = evaluateQuota(
+		state
+			? {
+					mode: state.mode,
+					consecutiveBelow: state.consecutiveBelow,
+					lastChangedAtMs: msFromIso(state.lastChangedAt),
+					reason: state.reason,
+				}
+			: initialQuotaState(scheduledTime),
+		snapshot,
+		scheduledTime,
+	);
+	// PHẢI ghi lại state khi `consecutiveBelow` thay đổi, không chỉ khi mode đổi:
+	// bộ đếm hysteresis (3 chu kỳ dưới ngưỡng exit) nằm trong DB. Nếu chỉ ghi
+	// khi mode đổi thì bộ đếm luôn = 0 ⇒ hệ thống KHÔNG BAO GIỜ tự hồi phục
+	// (mắc kẹt ở mode degraded vĩnh viễn sau khi leo thang).
+	const consecutiveChanged = next.consecutiveBelow !== (state?.consecutiveBelow ?? 0);
+	if (next.changed || consecutiveChanged || !state) {
+		const owner = await db.getOwner();
+		// `lastChangedAt` là mốc lần ĐỔI MODE gần nhất (dùng cho cooldown) —
+		// không được reset khi chỉ cập nhật bộ đếm, nếu không cooldown 30′
+		// không bao giờ hết.
+		const lastChangedAt = next.changed
+			? new Date(scheduledTime).toISOString()
+			: (state?.lastChangedAt ?? new Date(scheduledTime).toISOString());
+		await writeQuotaState(
+			db,
+			{
+				mode: next.mode,
+				reason: next.reason,
+				accountRequestsUsed: snapshot.accountRequestsUsed,
+				accountRequestLimit: snapshot.accountRequestLimit,
+				alkApiCallsUsed: snapshot.alkApiCallsUsed,
+				alkApiBudget: snapshot.alkApiBudget,
+				evaluatedAt: new Date(scheduledTime).toISOString(),
+				consecutiveBelow: next.consecutiveBelow,
+				lastChangedAt,
+				updatedAt: new Date(scheduledTime).toISOString(),
+			},
+			new Date(scheduledTime).toISOString(),
+		);
+		if (owner && next.changed) {
+			await recordAudit({ db, storage: deps.storage, config, now: () => new Date(scheduledTime) }, {
+				action: 'system.quota_mode.change',
+				actor: 'cron',
+				targetType: 'system',
+				targetId: 'quota',
+				metadata: { from: state?.mode ?? 'NORMAL', to: next.mode, reason: next.reason },
+			});
+		}
+	}
+}
+
+interface QuotaSnapshotInput {
+	accountRequestsUsed: number;
+	accountRequestLimit: number;
+	alkApiCallsUsed: number;
+	alkApiBudget: number;
+	dataAvailable: boolean;
+}
+
+/**
+ * Thu thập số liệu quota.
+ * - `CLOUDFLARE_ANALYTICS_TOKEN` (Worker secret) chưa cấu hình => dataAvailable=false,
+ *   hệ thống GIỮ NGUYÊN mode (không tự hạ bậc) theo nguyên tắc fail-safe.
+ */
+async function collectQuotaSnapshot(
+	deps: ScheduledDeps,
+	state: { accountRequestsUsed: number; accountRequestLimit: number; alkApiCallsUsed: number; alkApiBudget: number } | null,
+	nowMs: number,
+): Promise<QuotaSnapshotInput> {
+	const budget = deps.config.dailyApiBudget || DEFAULT_DAILY_API_BUDGET;
+	const limit = deps.config.accountDailyRequestLimit;
+	const day = utcDateKey(nowMs);
+	const usage = await deps.db.getUsageDaily(day);
+	const analyticsToken = deps.env.CLOUDFLARE_ANALYTICS_TOKEN;
+
+	if (!analyticsToken) {
+		return {
+			accountRequestsUsed: state?.accountRequestsUsed ?? 0,
+			accountRequestLimit: limit,
+			alkApiCallsUsed: state?.alkApiCallsUsed ?? usage?.api_calls ?? 0,
+			alkApiBudget: state?.alkApiBudget ?? budget,
+			dataAvailable: false,
+		};
+	}
+
+	try {
+		const accountId = deps.env.CLOUDFLARE_ACCOUNT_ID;
+		if (!accountId) throw new AppError('not_configured', 'thiếu CLOUDFLARE_ACCOUNT_ID');
+		const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${analyticsToken}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				query: `query($a: string!, $s: string!, $e: string!) {
+					viewer { accounts(filter: {accountTag: $a}) {
+						workersInvocationsAdaptive(limit: 10000, filter: {datetime_geq: $s, datetime_leq: $e}) {
+							sum { requests }
+							dimensions { date scriptName }
+						}
+					} }
+				}`,
+				variables: {
+					a: accountId,
+					s: `${day}T00:00:00.000Z`,
+					e: `${day}T23:59:59.999Z`,
+				},
+			}),
+		});
+		const payload = (await response.json()) as {
+			errors?: Array<{ message?: string }>;
+			data?: {
+				viewer?: {
+					accounts?: Array<{
+						workersInvocationsAdaptive?: Array<{ sum?: { requests?: number }; dimensions?: { scriptName?: string } }>;
+					}>;
+				};
+			};
+		};
+		// Fail-safe: token sai/thiếu scope ⇒ HTTP 403 hoặc `errors` trong body.
+		// Nếu coi như "0 request" thì dataAvailable=true ⇒ hệ thống TƯỞNG là còn
+		// dưới ngưỡng và KHÔNG bao giờ degrade ⇒ mất cơ chế bảo vệ quota.
+		if (!response.ok) {
+			throw new Error(`analytics HTTP ${response.status}`);
+		}
+		if (payload.errors && payload.errors.length > 0) {
+			throw new Error('analytics GraphQL trả lỗi');
+		}
+		const rows = payload.data?.viewer?.accounts?.[0]?.workersInvocationsAdaptive ?? [];
+		let accountUsed = 0;
+		let alkUsed = 0;
+		for (const row of rows) {
+			const requests = Number(row.sum?.requests ?? 0);
+			accountUsed += requests;
+			if ((row.dimensions?.scriptName ?? '').startsWith('alkcloud-api')) alkUsed += requests;
+		}
+		return {
+			accountRequestsUsed: accountUsed,
+			accountRequestLimit: limit,
+			alkApiCallsUsed: alkUsed,
+			alkApiBudget: budget,
+			dataAvailable: true,
+		};
+	} catch {
+		return {
+			accountRequestsUsed: state?.accountRequestsUsed ?? 0,
+			accountRequestLimit: limit,
+			alkApiCallsUsed: state?.alkApiCallsUsed ?? usage?.api_calls ?? 0,
+			alkApiBudget: state?.alkApiBudget ?? budget,
+			dataAvailable: false,
+		};
+	}
+}

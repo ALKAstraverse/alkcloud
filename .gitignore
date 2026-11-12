@@ -1,0 +1,32 @@
+node_modules/
+dist/
+dist-web/
+apps/web/dist/
+apps/web/dist-web/
+apps/api/dist/
+.wrangler/
+.dev.vars
+.env
+.env.*
+!.env.example
+*.log
+coverage/
+.DS_Store
+/tmp/
+keys/
+*.pem
+*.key
+backups/
+
+# Probe SigV4 tạm thời (dev-only)
+.probe/
+
+# Sinh tự động khi chuẩn bị production (chứa checklist, không có secret)
+deploy/
+
+# Báo cáo E2E (không commit)
+e2e-report.json
+e2e-report.md
+
+# Báo cáo audit quota (sinh tự động)
+quota-audit.md
