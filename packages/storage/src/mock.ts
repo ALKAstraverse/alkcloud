@@ -1,4 +1,5 @@
 import type {
+	ListObjectsResult,
 	MultipartPart,
 	ObjectStat,
 	ObjectStorage,
@@ -223,5 +224,36 @@ export class MockObjectStorage implements ObjectStorage {
 	async deleteObjectVersion(key: string, versionId: string): Promise<void> {
 		this.calls.push('deleteObjectVersion');
 		if (this.objects.has(key)) this.objects.delete(key);
+	}
+
+	async listObjects(request: {
+		prefix?: string;
+		continuationToken?: string;
+		maxKeys?: number;
+	} = {}): Promise<ListObjectsResult> {
+		this.calls.push('listObjects');
+		const prefix = request.prefix ?? '';
+		const all = [...this.objects.entries()]
+			.filter(([key]) => key.startsWith(prefix))
+			.map(([key, object]) => ({
+				key,
+				size: object.size,
+				etag: object.etag,
+				lastModified: object.updatedAt,
+			}))
+			.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+
+		// Mô phỏng phân trang S3: `continuationToken` = key bắt đầu (exclusive).
+		const startIndex = request.continuationToken
+			? all.findIndex((entry) => entry.key > request.continuationToken!)
+			: 0;
+		const from = startIndex < 0 ? all.length : startIndex;
+		const maxKeys = request.maxKeys ?? 1000;
+		const page = all.slice(from, from + maxKeys);
+		const hasMore = from + maxKeys < all.length;
+		return {
+			objects: page,
+			nextContinuationToken: hasMore ? (page[page.length - 1]?.key ?? null) : null,
+		};
 	}
 }

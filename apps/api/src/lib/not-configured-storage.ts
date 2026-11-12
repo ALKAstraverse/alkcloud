@@ -1,4 +1,5 @@
 import type {
+	ListObjectsResult,
 	MultipartPart,
 	ObjectStat,
 	ObjectStorage,
@@ -58,6 +59,13 @@ export class NotConfiguredStorage implements ObjectStorage {
 		this.fail();
 	}
 	async deleteObjectVersion(_key: string, _versionId: string): Promise<void> {
+		this.fail();
+	}
+	async listObjects(_request?: {
+		prefix?: string;
+		continuationToken?: string;
+		maxKeys?: number;
+	}): Promise<ListObjectsResult> {
 		this.fail();
 	}
 }

@@ -21,8 +21,10 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { splitDump } from '../packages/db/src/sql-dump.js';
 
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((arg) => arg.startsWith('--')));
@@ -113,9 +115,26 @@ try {
 		console.log(`--fresh: drop ${tables.length} bảng (${tables.join(', ')})`);
 		run(`PRAGMA foreign_keys=OFF; ${tables.map((name) => `DROP TABLE IF EXISTS "${name}";`).join(' ')}`);
 	}
+
+	// PHA 2: schema trước, rồi mới tới data.
+	// Bắt buộc: dump của `d1 export` có thể tạo bảng con (FK) TRƯỚC bảng cha,
+	// nếu nạp 1 lần SQLite lỗi "no such table: main.<bảng cha>".
+	const { schema, data } = splitDump(sql);
+	const tempDir = mkdtempSync(join(tmpdir(), 'alkcloud-restore-'));
+	const schemaFile = join(tempDir, 'schema.sql');
+	const dataFile = join(tempDir, 'data.sql');
+	writeFileSync(schemaFile, schema, 'utf8');
+	writeFileSync(dataFile, data, 'utf8');
+	console.log('  pha 1/2: nạp schema');
 	execFileSync(
 		'npx',
-		['wrangler', '-c', 'apps/api/wrangler.toml', 'd1', 'execute', 'alkcloud', remote ? '--remote' : '--local', '--file', file, '--yes'],
+		['wrangler', '-c', 'apps/api/wrangler.toml', 'd1', 'execute', 'alkcloud', remote ? '--remote' : '--local', '--file', schemaFile, '--yes'],
+		{ stdio: 'inherit' },
+	);
+	console.log('  pha 2/2: nạp dữ liệu');
+	execFileSync(
+		'npx',
+		['wrangler', '-c', 'apps/api/wrangler.toml', 'd1', 'execute', 'alkcloud', remote ? '--remote' : '--local', '--file', dataFile, '--yes'],
 		{ stdio: 'inherit' },
 	);
 	console.log('Restore xong. Kiểm tra số bản ghi: npx wrangler -c apps/api/wrangler.toml d1 execute alkcloud --local --command "SELECT COUNT(*) FROM owner"');

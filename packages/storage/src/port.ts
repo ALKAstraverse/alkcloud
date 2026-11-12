@@ -39,6 +39,20 @@ export interface ObjectVersion {
 	isDeleteMarker: boolean;
 }
 
+/** Một object trong kết quả liệt kê bucket. */
+export interface ObjectListEntry {
+	key: string;
+	size: number;
+	etag: string | null;
+	lastModified: string | null;
+}
+
+export interface ListObjectsResult {
+	objects: ObjectListEntry[];
+	/** Token trang tiếp theo (null = đã hết). */
+	nextContinuationToken: string | null;
+}
+
 /**
  * Port lưu trữ object. Mặc định là B2 private bucket (S3-compatible).
  * Không public bucket: mọi đường đọc đều qua signed request hoặc presigned URL có TTL.
@@ -61,6 +75,16 @@ export interface ObjectStorage {
 	deleteObject(key: string): Promise<void>;
 	listObjectVersions(key: string): Promise<ObjectVersion[]>;
 	deleteObjectVersion(key: string, versionId: string): Promise<void>;
+	/**
+	 * Liệt kê object trong bucket (S3 ListObjectsV2).
+	 * Dùng cho audit/reconcile: phát hiện object mồ côi (không còn metadata).
+	 * CHỈ ĐỌC — adapter không bao giờ xoá theo kết quả listing.
+	 */
+	listObjects(request?: {
+		prefix?: string;
+		continuationToken?: string;
+		maxKeys?: number;
+	}): Promise<ListObjectsResult>;
 }
 
 export class StorageError extends Error {

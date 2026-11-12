@@ -1,5 +1,7 @@
 import type {
+	ListObjectsResult,
 	MultipartPart,
+	ObjectListEntry,
 	ObjectStat,
 	ObjectStorage,
 	ObjectVersion,
@@ -284,5 +286,55 @@ export class B2Storage implements ObjectStorage {
 		if (!response.ok && response.status !== 404) {
 			throw new StorageError(`deleteObjectVersion failed: ${response.status}`, response.status);
 		}
+	}
+
+	/**
+	 * S3 ListObjectsV2 — liệt kê object trong bucket để audit/reconcile.
+	 *
+	 * Vì sao cần: phát hiện "object mồ côi" (B2 còn object nhưng D1 đã mất metadata)
+	 * là điều mà `headObject` từng-ke không thể thấy — phải duyệt toàn bucket.
+	 *
+	 * B2 trả XML với namespace mặc định; `extractXmlValues` bỏ qua namespace nên
+	 * hoạt động với cả dạng `<Contents>` lẫn `<ns:Contents>`.
+	 */
+	async listObjects(request: {
+		prefix?: string;
+		continuationToken?: string;
+		maxKeys?: number;
+	} = {}): Promise<ListObjectsResult> {
+		const query: Record<string, string> = { 'list-type': '2' };
+		if (request.prefix) query.prefix = request.prefix;
+		if (request.continuationToken) query['continuation-token'] = request.continuationToken;
+		if (request.maxKeys) query['max-keys'] = String(request.maxKeys);
+
+		const response = await this.signedFetch('GET', '', { query });
+		if (!response.ok) {
+			throw new StorageError(`listObjects failed: ${response.status}`, response.status);
+		}
+		const xml = await response.text();
+		const objects: ObjectListEntry[] = [];
+
+		// Mỗi object nằm trong thẻ `<Contents>…</Contents>`.
+		const contentsRegex = /<(?:\w+:)?Contents>([\s\S]*?)<\/(?:\w+:)?Contents>/g;
+		let match: RegExpExecArray | null;
+		while ((match = contentsRegex.exec(xml)) !== null) {
+			const chunk = match[1] ?? '';
+			const key = decodeXmlEntities(extractXmlValues(chunk, ['Key'])[0]?.value ?? '');
+			if (!key) continue;
+			const sizeRaw = extractXmlValues(chunk, ['Size'])[0]?.value;
+			const lastModified = extractXmlValues(chunk, ['LastModified'])[0]?.value;
+			objects.push({
+				key,
+				size: sizeRaw ? Number(sizeRaw) : 0,
+				etag: extractXmlValues(chunk, ['ETag'])[0]?.value ?? null,
+				lastModified: lastModified ?? null,
+			});
+		}
+
+		const truncated = /<(?:\w+:)?IsTruncated>true<\/(?:\w+:)?IsTruncated>/.test(xml);
+		const nextToken = truncated
+			? (extractXmlValues(xml, ['NextContinuationToken'])[0]?.value ?? null)
+			: null;
+		return { objects, nextContinuationToken: nextToken };
 	}
 }

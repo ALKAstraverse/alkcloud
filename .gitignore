@@ -30,3 +30,11 @@ e2e-report.md
 
 # Báo cáo audit quota (sinh tự động)
 quota-audit.md
+
+# Báo cáo storage integrity / restore drill (sinh tự động)
+restore-drill-report.json
+restore-drill-report.md
+storage-audit-report.json
+storage-audit-report.md
+reconcile-report.json
+reconcile-report.md

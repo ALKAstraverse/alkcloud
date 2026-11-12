@@ -34,7 +34,12 @@
     "verify:all": "./infra/verify-all.sh",
     "test:e2e": "node --import tsx scripts/e2e-production.ts",
     "prepare:production": "./infra/prepare-production.sh",
-    "audit:quota": "node --import tsx scripts/quota-audit.ts"
+    "audit:quota": "node --import tsx scripts/quota-audit.ts",
+    "db:seed:d1:local": "node --import tsx scripts/seed-local-d1.ts",
+    "audit:storage": "node --import tsx scripts/audit-storage.ts",
+    "reconcile:storage": "node --import tsx scripts/reconcile-storage.ts",
+    "verify:backup": "node --import tsx scripts/verify-backup.ts",
+    "restore:drill": "node --import tsx scripts/restore-drill.ts"
   },
   "devDependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",
