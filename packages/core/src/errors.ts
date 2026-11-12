@@ -5,6 +5,7 @@ export type ErrorCode =
 	| 'not_found'
 	| 'conflict'
 	| 'payload_too_large'
+	| 'range_not_satisfiable'
 	| 'too_many_requests'
 	| 'quota_exceeded'
 	| 'maintenance'
@@ -20,6 +21,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
 	not_found: 404,
 	conflict: 409,
 	payload_too_large: 413,
+	range_not_satisfiable: 416,
 	too_many_requests: 429,
 	quota_exceeded: 429,
 	maintenance: 503,

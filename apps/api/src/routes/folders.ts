@@ -146,9 +146,10 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 		const batchId = `bat_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
 		const now = context.now().toISOString();
 		const subtree = await context.db.listFolderSubtree(folder.id);
-		for (const node of subtree) {
-			await context.db.softDeleteFolder(node.id, batchId, now);
-		}
+		// SEC-05: 1 câu UPDATE (recursive CTE) cho toàn bộ subtree, KHÔNG loop từng node.
+		// Loop từng node = 1 subrequest mỗi node ⇒ vượt trần 50 subrequest của
+		// Workers Free ⇒ request chết giữa chừng ⇒ file mồ côi vĩnh viễn.
+		const nodesDeleted = await context.db.softDeleteFolderSubtree(folder.id, batchId, now);
 		// File bên trong thư mục cũng phải vào trash cùng batch — nếu không, chúng
 		// thành mồ côi: vẫn tính quota, không hiện trong trash, không bao giờ purge.
 		const purgeAfter = addDays(now, TRASH_RETENTION_DAYS);
@@ -164,10 +165,10 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 			targetType: 'folder',
 			targetId: folder.id,
 			ip: c.get('clientIp'),
-			metadata: { batchId, nodes: subtree.length, files: filesDeleted },
+			metadata: { batchId, nodes: nodesDeleted, files: filesDeleted },
 		});
 		return json(
-			{ ok: true, deleted: subtree.length, files: filesDeleted, mode },
+			{ ok: true, deleted: nodesDeleted, files: filesDeleted, mode },
 			200,
 			degradationHeaders(mode),
 		);
@@ -187,9 +188,8 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 		}
 		const now = context.now().toISOString();
 		const subtree = await context.db.listFolderSubtree(folder.id);
-		for (const node of subtree) {
-			await context.db.restoreFolder(node.id, now);
-		}
+		// SEC-05: 1 câu UPDATE (recursive CTE) cho toàn bộ subtree.
+		await context.db.restoreFolderSubtree(folder.id, now);
 		// Khôi phục file trong cùng batch — CHỈ trong phạm vi subtree vừa khôi phục.
 		// Nếu khôi phục cả batch thì file của thư mục anh em (folder cha vẫn còn
 		// trong trash) sẽ bị "khôi phục" trong khi vẫn không truy cập được.

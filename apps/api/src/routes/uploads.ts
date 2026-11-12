@@ -20,6 +20,84 @@ export const MULTIPART_THRESHOLD_BYTES = 100 * 1024 * 1024; // 100MB
 export const PART_SIZE_BYTES = 64 * 1024 * 1024; // 64MB => file 50GB cần ≤ 800 part (< 1000)
 export const DEFAULT_QUOTA_BYTES = 100 * 1024 * 1024 * 1024;
 
+
+/**
+ * SEC-12: loại bỏ presigned URL khỏi response trước khi lưu vào D1.
+ * Presigned URL là bearer credential — không được nằm plaintext trong DB/backup.
+ */
+export function stripPresignedUrls(response: Record<string, unknown>): Record<string, unknown> {
+	const parts = Array.isArray(response.parts) ? response.parts : [];
+	return {
+		...response,
+		parts: parts.map((part) => {
+			const item = part as Record<string, unknown>;
+			const { url: _url, ...rest } = item;
+			return rest;
+		}),
+	};
+}
+
+/**
+ * SEC-12: cấp lại presigned URL cho response replay của idempotency.
+ * Nếu session không còn hợp lệ ⇒ trả response đã lưu (không có URL) — client
+ * sẽ báo lỗi rõ ràng và có thể tạo session mới với Idempotency-Key khác.
+ */
+async function reissueUploadResponse(
+	context: AppContext,
+	storedBody: string,
+): Promise<string> {
+	let parsed: Record<string, unknown>;
+	try {
+		parsed = JSON.parse(storedBody) as Record<string, unknown>;
+	} catch {
+		return storedBody;
+	}
+	const sessionId = typeof parsed.uploadSessionId === 'string' ? parsed.uploadSessionId : null;
+	if (!sessionId) return storedBody;
+
+	const session = await context.db.getUploadSession(sessionId);
+	if (!session || session.status !== 'OPEN') return storedBody;
+
+	const targets: Array<Record<string, unknown>> = [];
+	const partCount = Math.min(session.partCount, MAX_PARTS_PER_REQUEST);
+	for (let partNumber = 1; partNumber <= partCount; partNumber++) {
+		try {
+			if (session.partCount === 1) {
+				const target = await context.storage.presignPut({
+					key: session.objectKey,
+					contentType: session.contentType,
+					contentLength: session.totalSize,
+					expiresInSeconds: 3600,
+				});
+				targets.push({
+					partNumber: 1,
+					url: target.url,
+					headers: target.headers,
+					expiresAt: target.expiresAt,
+				});
+			} else {
+				const uploadId = typeof parsed.uploadId === 'string' ? parsed.uploadId : null;
+				if (!uploadId) return storedBody;
+				const target = await context.storage.presignUploadPart({
+					key: session.objectKey,
+					uploadId,
+					partNumber,
+					expiresInSeconds: 3600,
+				});
+				targets.push({
+					partNumber,
+					url: target.url,
+					headers: target.headers,
+					expiresAt: target.expiresAt,
+				});
+			}
+		} catch {
+			return storedBody;
+		}
+	}
+	return JSON.stringify({ ...parsed, parts: targets });
+}
+
 export function createUploadRoutes(context: AppContext): Hono<AppEnv> {
 	const app = new Hono<AppEnv>();
 	app.use('*', requireOwner(context));
@@ -46,7 +124,10 @@ export function createUploadRoutes(context: AppContext): Hono<AppEnv> {
 					throw AppError.conflict('Idempotency-Key đã dùng với payload khác');
 				}
 				if (existing.responseBody) {
-					return new Response(existing.responseBody, {
+					// SEC-12: replay phải CẤP LẠI presigned URL mới (URL cũ không
+					// được lưu trong D1 và có thể đã hết hạn).
+					const replay = await reissueUploadResponse(context, existing.responseBody);
+					return new Response(replay, {
 						status: existing.statusCode ?? 200,
 						headers: { 'content-type': 'application/json; charset=utf-8', 'idempotent-replay': '1' },
 					});
@@ -146,13 +227,18 @@ export function createUploadRoutes(context: AppContext): Hono<AppEnv> {
 			}
 
 			if (idempotencyKey && auth) {
+				// SEC-12: KHÔNG lưu presigned URL vào D1.
+				// Presigned PUT là bearer credential (ai có URL đều PUT được object
+				// trong TTL) ⇒ không được nằm plaintext trong D1 (và trong mọi
+				// backup của D1). Chỉ lưu phần không nhạy cảm; URL được cấp lại
+				// khi replay (xem `reissueUploadResponse`).
 				await context.db.putIdempotency({
 					key: idempotencyKey,
 					ownerId: auth.ownerId,
 					endpoint: 'POST /api/v1/uploads',
 					requestHash,
 					statusCode: 201,
-					responseBody: JSON.stringify(response),
+					responseBody: JSON.stringify(stripPresignedUrls(response)),
 					now: now.toISOString(),
 					expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
 				});

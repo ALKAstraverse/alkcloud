@@ -49,8 +49,14 @@ export function createShareAdminRoutes(context: AppContext): Hono<AppEnv> {
 		if (input.passwordVerifier && !context.config.authPepper) {
 			throw AppError.notConfigured('AUTH_PEPPER chưa được cấu hình');
 		}
+		// SEC-03: salt per-share ĐƯỢC đưa vào hash. Trước đây salt lưu vào DB
+		// nhưng KHÔNG dùng ⇒ mọi share có cùng mật khẩu đều cho cùng một hash,
+		// và hash lưu trong D1 là preimage cố định cho wordlist.
+		// Với salt, mỗi share có hash riêng ⇒ không dùng chung được rainbow table.
 		const passwordHash = input.passwordVerifier
-			? await sha256Hex(`${input.passwordVerifier}${context.config.authPepper}`)
+			? await sha256Hex(
+					`${input.passwordVerifier}${input.passwordSalt ?? ''}${context.config.authPepper}`,
+				)
 			: null;
 
 		const now = context.now().toISOString();

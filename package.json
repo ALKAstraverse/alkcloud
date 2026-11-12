@@ -27,7 +27,7 @@
     "check:readiness": "./infra/check-readiness.sh",
     "verify": "npm run typecheck && npm run test && npm run build",
     "test:integration": "node --import tsx --test packages/storage/test/integration/*.test.ts apps/api/test/integration/*.test.ts",
-    "test:security": "node --import tsx --test apps/api/test/security.test.ts packages/auth/test/*.test.ts",
+    "test:security": "node --import tsx --test apps/api/test/security.test.ts apps/api/test/security-ratelimit.test.ts apps/api/test/security-phase4.test.ts apps/api/test/phase3-audit.test.ts packages/auth/test/*.test.ts",
     "db:restore": "node --import tsx scripts/restore-d1.ts",
     "check:limits": "./infra/check-worker-limits.sh",
     "verify:deployment": "./infra/check-deployment.sh",

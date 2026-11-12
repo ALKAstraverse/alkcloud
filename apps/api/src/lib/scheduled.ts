@@ -10,6 +10,10 @@ import {
 	TRASH_RETENTION_DAYS,
 	utcDateKey,
 } from '@alkcloud/core';
+/** Thời gian giữ audit log (ngày). `audit_chain` được giữ vĩnh viễn. */
+export const AUDIT_RETENTION_DAYS = 180;
+
+import { sweepAllLimiters } from '@alkcloud/auth';
 import type { Env, ResolvedConfig } from '../env.js';
 import { readQuotaState, writeQuotaState } from '../context.js';
 import { recordAudit } from './audit.js';
@@ -37,6 +41,15 @@ export async function runScheduledTasks(deps: ScheduledDeps): Promise<void> {
 	const now = nowIso();
 	await db.deleteExpiredSessions(now);
 	await db.deleteExpiredIdempotency(now);
+
+	// 1b. Cắt bớt audit log cũ (SEC-04) — bảng này không có retention nên phình
+	//     vô hạn. GIỮ NGUYÊN `audit_chain` (chuỗi hash không được đứt).
+	//     Retention 180 ngày — đủ cho điều tra sự cố cá nhân.
+	await db.pruneAuditLogs(new Date(new Date(now).getTime() - AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString());
+
+	// 1c. Dọn bucket rate limiter hết hạn (SEC-15) — nếu không, mỗi key IP
+	//     khác nhau giữ một entry vô thời hạn trong RAM của isolate.
+	sweepAllLimiters(scheduledTime);
 
 	// 2. Dọn upload session hết hạn + multipart tương ứng (CHỈ khi mode = NORMAL).
 	if (mode === 'NORMAL') {

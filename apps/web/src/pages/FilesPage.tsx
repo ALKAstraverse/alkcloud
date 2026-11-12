@@ -133,7 +133,7 @@ export function FilesPage({ onLogout }: FilesPageProps) {
 				maxDownloads: null,
 				passwordVerifier,
 				passwordSalt: password ? randomSalt() : null,
-				passwordParams: password ? 'sha256' : null,
+				passwordParams: password ? 'sha256-v1' : null,
 			});
 			setShareUrl(password ? `${result.url} (mật khẩu: ${password})` : result.url);
 		} catch (caught) {

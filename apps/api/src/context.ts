@@ -10,6 +10,24 @@ export interface AppContext {
 	now(): Date;
 }
 
+/**
+ * Bộ đếm API call theo ngày (SEC-13).
+ *
+ * `usage_daily.api_calls` trước đây KHÔNG BAO GIỜ được ghi ⇒ nửa "budget" của
+ * cơ chế degradation luôn bằng 0 ⇒ `evaluateQuota` không bao giờ hạ bậc.
+ *
+ * Ghi 1 D1 row cho MỖI request là quá đắt (Workers Free: 100k rows/day, cùng
+ * hạn mức với số request) ⇒ đếm trong RAM của isolate rồi GỘP (batch) mỗi
+ * `USAGE_FLUSH_THRESHOLD` request. Sai số tối đa = số request chưa flush khi
+ * isolate bị thu hồi — chấp nhận được vì đây là ước lượng, không phải hard cap.
+ */
+export const USAGE_FLUSH_THRESHOLD = 20;
+
+interface UsageCounter {
+	pending: number;
+	day: string;
+}
+
 const QUOTA_STATE_KEY = 'quota_state';
 
 interface CachedQuota {
@@ -40,6 +58,29 @@ export async function writeQuotaState(db: Database, state: UsageState, now: stri
 
 export function invalidateQuotaCache(db: Database): void {
 	quotaCacheByDb.delete(db);
+}
+
+const usageCounterByDb = new WeakMap<Database, UsageCounter>();
+
+/** Ghi nhận 1 API call. Trả về true nếu đã tới ngưỡng flush (caller ghi D1). */
+export function recordApiCall(db: Database, day: string): boolean {
+	const counter = usageCounterByDb.get(db) ?? { pending: 0, day };
+	if (counter.day !== day) {
+		counter.day = day;
+		counter.pending = 0;
+	}
+	counter.pending += 1;
+	usageCounterByDb.set(db, counter);
+	return counter.pending >= USAGE_FLUSH_THRESHOLD;
+}
+
+/** Lấy số request đang chờ ghi + reset bộ đếm. */
+export function takePendingApiCalls(db: Database): number {
+	const counter = usageCounterByDb.get(db);
+	if (!counter || counter.pending === 0) return 0;
+	const pending = counter.pending;
+	counter.pending = 0;
+	return pending;
 }
 
 export function currentMode(state: UsageState | null): DegradationMode {

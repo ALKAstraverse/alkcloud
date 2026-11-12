@@ -62,6 +62,10 @@ export interface Share {
 	fileId: Id;
 	tokenHash: string;
 	passwordHash: string | null;
+	/** Salt per-share (dùng trong công thức hash mật khẩu share). */
+	passwordSalt: string | null;
+	/** Thông số KDF mà client dùng (vd 'sha256') — để audit/future migration. */
+	passwordParams: string | null;
 	expiresAt: IsoDate;
 	maxDownloads: number | null;
 	downloadCount: number;

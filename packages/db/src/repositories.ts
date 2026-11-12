@@ -92,6 +92,8 @@ function mapShare(row: Row): Share {
 		fileId: str(row.file_id),
 		tokenHash: str(row.token_hash),
 		passwordHash: nullableStr(row.password_hash),
+		passwordSalt: nullableStr(row.password_salt),
+		passwordParams: nullableStr(row.password_params),
 		expiresAt: str(row.expires_at),
 		maxDownloads: nullableNum(row.max_downloads),
 		downloadCount: num(row.download_count),
@@ -386,16 +388,19 @@ export class Database {
 		return row ? mapFolder(row) : null;
 	}
 
-	async listFolders(parentId: Id | null): Promise<Folder[]> {
+	async listFolders(parentId: Id | null, limit = 200, offset = 0): Promise<Folder[]> {
+		// SEC-11: luôn có LIMIT — trả về toàn bộ folder có thể vượt giới hạn
+		// response/CPU của một Worker invocation.
 		if (parentId === null) {
 			const result = await this.driver.query(
-				'SELECT * FROM folders WHERE parent_id IS NULL AND deleted_at IS NULL ORDER BY name_lower ASC',
+				'SELECT * FROM folders WHERE parent_id IS NULL AND deleted_at IS NULL ORDER BY name_lower ASC LIMIT ? OFFSET ?',
+				[limit, offset],
 			);
 			return result.rows.map(mapFolder);
 		}
 		const result = await this.driver.query(
-			'SELECT * FROM folders WHERE parent_id = ? AND deleted_at IS NULL ORDER BY name_lower ASC',
-			[parentId],
+			'SELECT * FROM folders WHERE parent_id = ? AND deleted_at IS NULL ORDER BY name_lower ASC LIMIT ? OFFSET ?',
+			[parentId, limit, offset],
 		);
 		return result.rows.map(mapFolder);
 	}
@@ -492,6 +497,47 @@ export class Database {
 			'UPDATE folders SET deleted_at = NULL, deleted_batch_id = NULL, updated_at = ?, version = version + 1 WHERE id = ?',
 			[now, id],
 		);
+	}
+
+	/**
+	 * Xoá mềm TOÀN BỘ subtree folder bằng MỘT câu lệnh (recursive CTE).
+	 *
+	 * SEC-05: trước đây route gọi `softDeleteFolder` cho từng node ⇒ mỗi node là
+	 * 1 D1 subrequest. Workers Free chỉ cho 50 subrequest/request ⇒ subtree > ~45
+	 * folder làm request chết GIỮA CHỪNG ⇒ một phần folder đã xoá, phần còn lại
+	 * chưa ⇒ file bên trong mồ côi (vô hình, vẫn tính quota, KHÔNG BAO GIỜ purge).
+	 */
+	async softDeleteFolderSubtree(id: Id, batchId: Id, now: string): Promise<number> {
+		const result = await this.driver.run(
+			`UPDATE folders SET deleted_at = ?, deleted_batch_id = ?, updated_at = ?, version = version + 1
+			 WHERE deleted_at IS NULL AND id IN (
+				WITH RECURSIVE subtree(id) AS (
+					SELECT id FROM folders WHERE id = ?
+					UNION ALL
+					SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
+				)
+				SELECT id FROM subtree
+			 )`,
+			[now, batchId, now, id],
+		);
+		return result.changes ?? 0;
+	}
+
+	/** Khôi phục TOÀN BỘ subtree folder bằng MỘT câu lệnh (xem SEC-05). */
+	async restoreFolderSubtree(id: Id, now: string): Promise<number> {
+		const result = await this.driver.run(
+			`UPDATE folders SET deleted_at = NULL, deleted_batch_id = NULL, updated_at = ?, version = version + 1
+			 WHERE deleted_at IS NOT NULL AND id IN (
+				WITH RECURSIVE subtree(id) AS (
+					SELECT id FROM folders WHERE id = ?
+					UNION ALL
+					SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
+				)
+				SELECT id FROM subtree
+			 )`,
+			[now, id],
+		);
+		return result.changes ?? 0;
 	}
 
 	/** Folder + toàn bộ hậu duệ (dùng cho move/delete/restore theo subtree). */
@@ -639,6 +685,21 @@ export class Database {
 		await this.driver.run('DELETE FROM files WHERE id = ?', [id]);
 	}
 
+	/**
+	 * Xoá file VĨNH VIỄN chỉ khi nó VẪN đang trong trash và ĐÃ hết hạn purge.
+	 *
+	 * SEC-09: purge là thao tác phá huỷ — nếu file đã được restore (hoặc hạn purge
+	 * bị đổi) trong lúc request đang chạy thì xoá vô điều kiện sẽ **mất file vĩnh viễn**
+	 * (object B2 đã xoá, row D1 bị xoá) dù owner vừa khôi phục nó.
+	 */
+	async deleteFileRowIfStillTrashed(id: Id, now: string): Promise<boolean> {
+		const result = await this.driver.run(
+			'DELETE FROM files WHERE id = ? AND deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ?',
+			[id, now],
+		);
+		return (result.changes ?? 0) > 0;
+	}
+
 	/** Tổng dung lượng file đang hoạt động (chưa xoá). */
 	async sumActiveFileBytes(): Promise<number> {
 		const result = await this.driver.query<{ total: number }>(
@@ -690,10 +751,11 @@ export class Database {
 		return row ? mapShare(row) : null;
 	}
 
-	async listSharesForFile(fileId: Id): Promise<Share[]> {
+	async listSharesForFile(fileId: Id, limit = 200, offset = 0): Promise<Share[]> {
+		// SEC-11: luôn có LIMIT.
 		const result = await this.driver.query(
-			'SELECT * FROM shares WHERE file_id = ? ORDER BY created_at DESC',
-			[fileId],
+			'SELECT * FROM shares WHERE file_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+			[fileId, limit, offset],
 		);
 		return result.rows.map(mapShare);
 	}
@@ -826,6 +888,16 @@ export class Database {
 		]);
 	}
 
+	/** Tìm upload session OPEN theo object_key (SEC-09 — không quét theo trang). */
+	async findOpenUploadSessionByObjectKey(objectKey: string): Promise<UploadSession | null> {
+		const result = await this.driver.query(
+			"SELECT * FROM upload_sessions WHERE object_key = ? AND status = 'OPEN' LIMIT 1",
+			[objectKey],
+		);
+		const row = result.rows[0];
+		return row ? mapUploadSession(row) : null;
+	}
+
 	async listOpenUploadSessions(limit: number): Promise<UploadSession[]> {
 		const result = await this.driver.query(
 			"SELECT * FROM upload_sessions WHERE status = 'OPEN' ORDER BY created_at ASC LIMIT ?",
@@ -921,8 +993,34 @@ export class Database {
 		throw lastError ?? new Error('audit chain head conflict');
 	}
 
+	/**
+	 * Cắt bớt `audit_logs` cũ (SEC-04) — bảng này KHÔNG có retention nên bị
+	 * phình vô hạn theo thời gian (mỗi lần đăng nhập sai = 2 row).
+	 *
+	 * CHỈ xoá `audit_logs`; `audit_chain` được GIỮ NGUYÊN (nó là chuỗi hash
+	 * liên kết, xoá entry giữa sẽ đứt chuỗi). Bảng chain nhỏ hơn nhiều
+	 * (1 row/event, không có metadata JSON) nên chi phí giữ là chấp nhận được.
+	 */
+	async pruneAuditLogs(before: string, limit = 500): Promise<number> {
+		const result = await this.driver.run(
+			`DELETE FROM audit_logs WHERE created_at < ? AND id IN (
+				SELECT id FROM audit_logs WHERE created_at < ? ORDER BY created_at ASC LIMIT ?
+			)`,
+			[before, before, limit],
+		);
+		return result.changes ?? 0;
+	}
+
 	async listAudit(limit: number): Promise<AuditEvent[]> {
-		const result = await this.driver.query('SELECT * FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT ?', [limit]);
+		// SEC-10: sắp theo `seq` của audit_chain (thứ tự THẬT của chuỗi hash),
+		// không theo created_at + id (id là random ⇒ thứ tự ngẫu nhiên khi trùng
+		// milisecond ⇒ báo cáo "chain hỏng" giả).
+		const result = await this.driver.query(
+			`SELECT l.* FROM audit_logs l
+			 LEFT JOIN audit_chain c ON c.entry_hash = l.entry_hash
+			 ORDER BY COALESCE(c.seq, -1) DESC, l.created_at DESC, l.id DESC LIMIT ?`,
+			[limit],
+		);
 		return result.rows.map((row) => ({
 			id: str(row.id),
 			action: str(row.action) as AuditAction,

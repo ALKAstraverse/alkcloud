@@ -8,9 +8,9 @@ import {
 	validateOrigin,
 } from '@alkcloud/auth';
 import type { AppContext } from '../context.js';
-import { readQuotaState } from '../context.js';
+import { readQuotaState, recordApiCall, takePendingApiCalls } from '../context.js';
 import { clientIp } from '../lib/http.js';
-import type { DegradationMode, UsageState } from '@alkcloud/core';
+import { utcDateKey, type DegradationMode, type UsageState } from '@alkcloud/core';
 
 export interface AuthenticatedSession {
 	sessionId: string;
@@ -60,6 +60,20 @@ export function loadQuotaState(context: AppContext): MiddlewareHandler<AppEnv> {
 		c.set('quotaMode', state?.mode ?? 'NORMAL');
 		c.set('quotaState', state ?? null);
 		c.set('clientIp', clientIp(c.req.raw));
+
+		// SEC-13: đếm API call để `usage_daily.api_calls` có số liệu thật.
+		const day = utcDateKey(context.now().getTime());
+		if (recordApiCall(context.db, day)) {
+			const pending = takePendingApiCalls(context.db);
+			if (pending > 0) {
+				try {
+					await context.db.bumpUsageDaily(day, { api_calls: pending }, context.now().toISOString());
+				} catch {
+					// Không được làm fail request chính vì bộ đếm usage lỗi.
+				}
+			}
+		}
+
 		await next();
 	};
 }

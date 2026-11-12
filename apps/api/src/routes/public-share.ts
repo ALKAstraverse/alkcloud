@@ -5,6 +5,8 @@ import type { AppContext } from '../context.js';
 import { recordAudit } from '../lib/audit.js';
 import { clientIp, encodeRfc5987, json, parseJsonBody } from '../lib/http.js';
 import { assertCapability, degradationHeaders } from '../lib/quota-guard.js';
+import { assertRangeSatisfiable } from '../lib/range.js';
+import { isServerSideStorageFailure } from '../lib/storage-error.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { shareUnlockSchema } from '@alkcloud/core';
 
@@ -107,7 +109,11 @@ export function createPublicShareRoutes(context: AppContext): Hono<AppEnv> {
 		const provided = parsed.success ? parsed.data.passwordVerifier : undefined;
 
 		if (share.passwordHash) {
-			const candidate = provided ? await sha256Hex(`${provided}${context.config.authPepper!}`) : null;
+			// Cùng công thức với lúc tạo share: verifier || salt || pepper.
+			// `share.passwordSalt` là salt do client sinh khi tạo share (lưu trong D1).
+			const candidate = provided
+				? await sha256Hex(`${provided}${share.passwordSalt ?? ''}${context.config.authPepper!}`)
+				: null;
 			if (!candidate || !timingSafeEqual(candidate, share.passwordHash)) {
 				await recordAudit(context, {
 					action: 'share.unlock.failure',
@@ -182,21 +188,31 @@ export function createPublicShareRoutes(context: AppContext): Hono<AppEnv> {
 		const file = await context.db.getFile(share.fileId);
 		if (!file || file.deletedAt) throw AppError.notFound('File không còn tồn tại');
 
+		// SEC-02: kiểm tra Range TRƯỚC khi tăng bộ đếm.
+		// Nếu không, client gửi Range không thỏa mãn (vd bytes=999999999-) ⇒ B2 trả
+		// 416 ⇒ route hoàn lại lượt tải ⇒ attacker reset được bộ đếm và tải
+		// vô hạn lần dù share có maxDownloads.
+		const range = assertRangeSatisfiable(c.req.header('range'), file.size);
+
 		// Tăng bộ đếm download ngay khi cấp quyền tải (atomic, có điều kiện max_downloads).
 		const allowed = await context.db.incrementShareDownload(share.id, context.now().toISOString());
 		if (!allowed) throw AppError.forbidden('Share đã đạt giới hạn tải');
 
 		let upstream: Response;
 		try {
-			upstream = await context.storage.getObject(file.objectKey, c.req.header('range') ?? undefined);
+			upstream = await context.storage.getObject(file.objectKey, range ?? undefined);
 		} catch (error) {
-			// Đọc object thất bại (B2 lỗi / object mất) ⇒ hoàn lại lượt tải,
-			// nếu không người dùng mất lượt tải dù không tải được gì.
-			await context.db.decrementShareDownload(share.id, context.now().toISOString());
+			// Chỉ hoàn lại lượt tải khi lỗi do HẠ TẦNG (5xx / mạng). Lỗi 4xx là do
+			// client ⇒ KHÔNG hoàn (nếu không, lỗi 416 sẽ reset được bộ đếm).
+			if (isServerSideStorageFailure(error)) {
+				await context.db.decrementShareDownload(share.id, context.now().toISOString());
+			}
 			throw error;
 		}
 		if (upstream.status >= 400) {
-			await context.db.decrementShareDownload(share.id, context.now().toISOString());
+			if (upstream.status >= 500) {
+				await context.db.decrementShareDownload(share.id, context.now().toISOString());
+			}
 			throw AppError.notFound('File không còn tồn tại');
 		}
 		const headers = new Headers();

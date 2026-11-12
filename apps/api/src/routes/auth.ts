@@ -1,5 +1,5 @@
 import { MemoryRateLimiter, DEFAULT_POLICIES } from '@alkcloud/auth';
-import { AppError, addDays, newId, randomToken, sha256Hex } from '@alkcloud/core';
+import { AppError, addDays, newId, randomToken, sha256Hex, timingSafeEqual } from '@alkcloud/core';
 import { Hono } from 'hono';
 import {
 	SESSION_COOKIE_NAME,
@@ -26,9 +26,37 @@ import { resolveSession, requireOwner, type AppEnv } from '../middleware/auth.js
 export function createAuthRoutes(context: AppContext): Hono<AppEnv> {
 	const app = new Hono<AppEnv>();
 
+	/**
+	 * Origin check cho các endpoint public-but-stateful (bootstrap / login /
+	 * recovery-login). Không có cookie ⇒ không dùng được `requireOwner`
+	 * (CSRF token), nhưng endpoint này SET cookie session ⇒ nếu không kiểm
+	 * Origin, một trang web khác có thể ép trình duyệt nạn nhân đăng nhập
+	 * (login CSRF) hoặc đốt mã khôi phục.
+	 */
+	const requireTrustedOrigin = (request: Request): void => {
+		const originCheck = validateOrigin(request, {
+			allowedOrigins: context.config.allowedOrigins,
+			enforce: true,
+		});
+		if (!originCheck.ok) throw AppError.forbidden(originCheck.reason ?? 'Origin không hợp lệ');
+	};
+
 	// Limiter theo instance Worker (mỗi isolate một bộ). Lớp authoritative vẫn là
 	// Cloudflare Rate Limiting Rule vì isolate không chia sẻ state giữa PoP.
+	// Limiter theo IP: key KHÔNG chứa email (attacker kiểm soát email ⇒ đổi email
+	// để né limiter và rò bộ nhớ của isolate). Xem SEC-15.
 	const loginLimiter = new MemoryRateLimiter(DEFAULT_POLICIES.login.limit, DEFAULT_POLICIES.login.windowMs);
+	// Limiter theo TÀI KHOẢN: chỉ có đúng 1 owner ⇒ đây là lớp bảo vệ duy nhất
+	// chống brute-force khi attacker xoay nhiều IP. Rộng hơn limiter theo IP
+	// để owner đổi mạng/VPN không bị chặn nhầm.
+	const accountLoginLimiter = new MemoryRateLimiter(
+		DEFAULT_POLICIES.loginAccount.limit,
+		DEFAULT_POLICIES.loginAccount.windowMs,
+	);
+	const recoveryLimiter = new MemoryRateLimiter(
+		DEFAULT_POLICIES.recoveryLogin.limit,
+		DEFAULT_POLICIES.recoveryLogin.windowMs,
+	);
 	const bootstrapLimiter = new MemoryRateLimiter(
 		DEFAULT_POLICIES.bootstrap.limit,
 		DEFAULT_POLICIES.bootstrap.windowMs,
@@ -90,6 +118,7 @@ export function createAuthRoutes(context: AppContext): Hono<AppEnv> {
 	});
 
 	app.post('/bootstrap', async (c) => {
+		requireTrustedOrigin(c.req.raw);
 		const body = await parseJsonBody(c.req.raw);
 		const parsed = bootstrapSchema.safeParse(body);
 		if (!parsed.success) throw AppError.badRequest('Dữ liệu bootstrap không hợp lệ');
@@ -97,7 +126,9 @@ export function createAuthRoutes(context: AppContext): Hono<AppEnv> {
 		if (!context.config.bootstrapSetupToken) {
 			throw AppError.notConfigured('BOOTSTRAP_SETUP_TOKEN chưa được cấu hình');
 		}
-		if (parsed.data.setupToken !== context.config.bootstrapSetupToken) {
+		// So sánh constant-time — `!==` dừng ở ký tự khác nhau đầu tiên ⇒
+		// timing oracle nhỏ (nhưng đủ để đoán dần token khi rate limit yếu).
+		if (!timingSafeEqual(parsed.data.setupToken, context.config.bootstrapSetupToken)) {
 			throw AppError.forbidden('setup token không hợp lệ');
 		}
 		if (!context.config.authPepper) {
@@ -162,14 +193,20 @@ export function createAuthRoutes(context: AppContext): Hono<AppEnv> {
 	});
 
 	app.post('/login', async (c) => {
+		requireTrustedOrigin(c.req.raw);
 		const body = await parseJsonBody(c.req.raw);
 		const parsed = loginSchema.safeParse(body);
 		if (!parsed.success) throw AppError.badRequest('Dữ liệu đăng nhập không hợp lệ');
 		if (!context.config.authPepper) throw AppError.notConfigured('AUTH_PEPPER chưa được cấu hình');
 
 		const ip = clientIp(c.req.raw);
-		const limiterKey = `login:${ip}:${parsed.data.email.toLowerCase()}`;
-		const decision = loginLimiter.consume(limiterKey, context.now().getTime());
+		// Chặn theo IP (chống spray) VÀ theo tài khoản (chống xoay IP).
+		const ipDecision = loginLimiter.consume(`login:${ip}`, context.now().getTime());
+		const accountDecision = accountLoginLimiter.consume(
+			`login:account:${parsed.data.email.toLowerCase()}`,
+			context.now().getTime(),
+		);
+		const decision = ipDecision.allowed ? accountDecision : ipDecision;
 		if (!decision.allowed) {
 			await recordAudit(context, {
 				action: 'auth.login.failure',
@@ -224,13 +261,39 @@ export function createAuthRoutes(context: AppContext): Hono<AppEnv> {
 	});
 
 	app.post('/recovery-login', async (c) => {
+		requireTrustedOrigin(c.req.raw);
 		const body = await parseJsonBody(c.req.raw);
 		const parsed = recoveryLoginSchema.safeParse(body);
 		if (!parsed.success) throw AppError.badRequest('Dữ liệu không hợp lệ');
 		if (!context.config.authPepper) throw AppError.notConfigured('AUTH_PEPPER chưa được cấu hình');
 
+		// Mã khôi phục BỎ QUA Argon2id — nó là bearer secret 1 lần dùng.
+		// Không có limiter ⇒ attacker thử vô hạn (đồng thời đốt cả 10 mã của owner).
+		const ip = clientIp(c.req.raw);
+		const recoveryDecision = recoveryLimiter.consume(`recovery:${ip}`, context.now().getTime());
+		if (!recoveryDecision.allowed) {
+			await recordAudit(context, {
+				action: 'auth.login.failure',
+				actor: parsed.data.email.toLowerCase(),
+				ip,
+				metadata: { reason: 'rate_limited', channel: 'recovery' },
+			});
+			throw AppError.rateLimited(
+				`Quá nhiều lần thử mã khôi phục. Thử lại sau ${recoveryDecision.retryAfterSeconds}s.`,
+				recoveryDecision.retryAfterSeconds,
+			);
+		}
+
 		const owner = await context.db.getOwner();
 		if (!owner || owner.email !== parsed.data.email.toLowerCase()) {
+			// Phải audit cả nhánh email sai — nếu không, việc dò email đúng/sai
+			// không để lại dấu vết nào trong audit log.
+			await recordAudit(context, {
+				action: 'auth.login.failure',
+				actor: parsed.data.email.toLowerCase(),
+				ip,
+				metadata: { reason: 'email_mismatch', channel: 'recovery' },
+			});
 			throw AppError.unauthorized('Thông tin đăng nhập không hợp lệ');
 		}
 		const codeHash = await hashRecoveryCode(formatRecoveryCode(parsed.data.code), context.config.authPepper);

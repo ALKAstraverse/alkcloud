@@ -4,6 +4,7 @@ import type { AppContext } from '../context.js';
 import { recordAudit } from '../lib/audit.js';
 import { encodeRfc5987, json, mapDbConflict, parseJsonBody } from '../lib/http.js';
 import { assertCapability, degradationHeaders } from '../lib/quota-guard.js';
+import { assertRangeSatisfiable } from '../lib/range.js';
 import { requireOwner, type AppEnv } from '../middleware/auth.js';
 
 export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
@@ -62,7 +63,22 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 	app.get('/:id', async (c) => {
 		const file = await context.db.getFile(c.req.param('id'));
 		if (!file) throw AppError.notFound('Không tìm thấy file');
-		return json({ file });
+		// SEC-08: file trong trash coi như "không còn" — giống hệt download/open.
+		// Ngoài ra KHÔNG trả raw row (objectKey, etag, revisionId, nameLower...)
+		// cho client: các field nội bộ không cần thiết cho UI.
+		if (file.deletedAt) throw AppError.notFound('Không tìm thấy file');
+		return json({
+			file: {
+				id: file.id,
+				name: file.name,
+				size: file.size,
+				contentType: file.contentType,
+				folderId: file.folderId,
+				createdAt: file.createdAt,
+				updatedAt: file.updatedAt,
+				checksumSha256: file.checksumSha256,
+			},
+		});
 	});
 
 	app.patch('/:id', async (c) => {
@@ -180,8 +196,9 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		if (activeShares > 0) {
 			throw AppError.conflict('Còn share đang hoạt động — thu hồi share trước khi xóa vĩnh viễn');
 		}
-		const openUploads = await context.db.listOpenUploadSessions(200);
-		const relatedUpload = openUploads.find((upload) => upload.objectKey === file.objectKey);
+		// SEC-09: tra cứu TRỰC TIẾP theo object_key thay vì quét 200 session cũ nhất
+		// (nếu > 200 session OPEN, session liên quan nằm ngoài cửa sổ bị bỏ sót).
+		const relatedUpload = await context.db.findOpenUploadSessionByObjectKey(file.objectKey);
 		if (relatedUpload) {
 			throw AppError.conflict('Còn upload session liên quan — abort upload trước');
 		}
@@ -196,7 +213,13 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		} catch (error) {
 			throw AppError.quota('Chưa xóa được object trên B2 — sẽ thử lại ở lần cron sau', 300);
 		}
-		await context.db.deleteFileRow(file.id);
+		// SEC-09: xoá có điều kiện — nếu file đã được restore (hoặc purge_after
+		// bị đổi) trong lúc request này đang chạy thì KHÔNG được xoá.
+		// Nếu xoá B2 xong mà D1 không xoá ⇒ mất file vĩnh viễn.
+		const deleted = await context.db.deleteFileRowIfStillTrashed(file.id, context.now().toISOString());
+		if (!deleted) {
+			throw AppError.conflict('File đã được khôi phục hoặc thay đổi — không xoá vĩnh viễn');
+		}
 		await recordAudit(context, {
 			action: 'file.purge',
 			actor: auth?.email ?? 'unknown',
@@ -214,8 +237,8 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		assertCapability(mode, 'allowOwnerDownload');
 		const file = await context.db.getFile(c.req.param('id'));
 		if (!file || file.deletedAt) throw AppError.notFound('Không tìm thấy file');
-		const range = c.req.header('range');
-		const upstream = await context.storage.getObject(file.objectKey, range);
+		const range = assertRangeSatisfiable(c.req.header('range'), file.size);
+		const upstream = await context.storage.getObject(file.objectKey, range ?? undefined);
 		const headers = new Headers();
 		headers.set('content-type', file.contentType || 'application/octet-stream');
 		headers.set(
