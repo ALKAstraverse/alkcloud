@@ -58,6 +58,9 @@ run "build (api + web)"   npm run --silent build
 run "worker limits"       ./infra/check-worker-limits.sh
 run "deployment (tĩnh)"  ./infra/check-deployment.sh
 run "log safety"          ./infra/check-log-safety.sh
+run "web client safety"   npm run --silent check:web
+run "benchmark (WS-G)"    npm run --silent bench
+run "cost model (WS-H)"   npm run --silent cost
 run "quota audit"         npm run --silent audit:quota
 run "restore drill (local)" npm run --silent restore:drill
 BACKUP_FILE="$(ls -t backups/alkcloud-d1-*.sql 2>/dev/null | head -1 || true)"

@@ -1,6 +1,15 @@
 /** Client API cho AlkCloud. */
 
-export const API_BASE = (import.meta.env.VITE_ALKCLOUD_API_URL as string | undefined) ?? '/api/v1';
+/**
+ * Base URL của API.
+ *
+ * `import.meta.env` chỉ tồn tại khi Vite build. Khi chạy test bằng `node --test`
+ * (không qua Vite) `import.meta.env` là `undefined` ⇒ phải guard để không ném
+ * TypeError lúc import module.
+ */
+const viteEnv = (import.meta as { env?: Record<string, string | undefined> }).env ?? {};
+
+export const API_BASE = viteEnv.VITE_ALKCLOUD_API_URL ?? '/api/v1';
 
 export interface ApiErrorBody {
 	error?: { code?: string; message?: string; details?: unknown };
