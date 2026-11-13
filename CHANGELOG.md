@@ -7,8 +7,8 @@
 
 ## [Unreleased] — Phase 5 (13/11/2026) — DEPLOY PRODUCTION
 
-> Trạng thái: **PARTIALLY DEPLOYED**. API + Web + D1 + DNS + owner + cron đã chạy thật trên
-> Cloudflare; **object storage (B2) còn BLOCKED** vì credential owner không hợp lệ.
+> Trạng thái: **PRODUCTION VERIFIED**. API + relay + Web + D1 + DNS + owner + cron + B2 đã chạy thật;
+> E2E `PASS=21 · FAIL=0 · SKIP=0 · BLOCKED=0`, `verify-all` `PASS=24 · FAIL=0 · SKIP=0 · BLOCKED=0`.
 > Bằng chứng: `docs/34-PRODUCTION-DEPLOYMENT-REPORT.md` · `docs/35-PRODUCTION-VERIFICATION.md`.
 
 ### Added
@@ -20,6 +20,10 @@
 | **Xác minh production** | `scripts/verify-auth-production.ts` (13 kiểm tra), `scripts/verify-monitoring-production.ts`, `scripts/run-e2e-production.ts` (wrapper E2E, tự tính authKey) | `docs/35` |
 | **Loader token theo nhãn** | `infra/lib/cf-token.sh` — nạp token Cloudflare theo label (`Edit Cloudflare Workers`, `AlkCloud-Baseline-ReadOnly`, …), truyền qua env (không argv) | `docs/34` §3 |
 | **CSP cho static assets** | `apps/web/public/_headers` — Workers Static Assets phục vụ asset **không** gọi Worker ⇒ phải khai báo header qua file `_headers` | `docs/34` §4 |
+| **B2 storage thật** | Bucket `alkcloud-storage` (private, SSE-B2 `AES256`, CORS origin `cloud.alk.xx.kg`, expose `ETag`); 5 secret `B2_*` set; integration test 2/2; E2E file đầy đủ | `docs/35` §3 |
+| **Relay `alkcloud-b2relay`** | Worker workers.dev chỉ nhận request server-side đã ký; token bí mật + host allowlist; deploy + health/401 checks | `docs/34` §4, `apps/b2relay/` |
+| **Proxy trong storage adapter** | `packages/storage/src/b2.ts` thêm `B2ProxyConfig`; `signedFetch` đi qua relay, presign vẫn trỏ thẳng B2 | `docs/34` §4 |
+| **CORS bucket** | `PutBucketCors` (SigV4) — origin `https://cloud.alk.xx.kg`, methods GET/PUT/HEAD, expose `ETag`, max-age 3600; xác minh bằng preflight + PUT thật | `docs/35` §3.1 |
 
 ### Fixed
 
@@ -32,6 +36,10 @@
 | BUG-09 | `release-manifest.ts` mất danh sách secret khi tên secret kèm chú thích trạng thái | Cao |
 | BUG-10 | Test chaos `T5` phụ thuộc `wrangler.toml` thật ⇒ không kiểm chứng được guard placeholder | Trung bình |
 | BUG-12 | `alkApiCallsUsed` **luôn = 0** (Cloudflare gom request Worker-route vào `__unknown__`) ⇒ cảnh báo ngân sách riêng không bao giờ kích hoạt | Cao |
+| BUG-13 | Chẩn đoán B2 sai: probe thiếu `/b2api/v2/` + B2 bỏ field JSON trong `AuthorizeAccountRequest` (phải dùng HTTP Basic) ⇒ kết luận nhầm “key không tồn tại” | Cao |
+| BUG-14 | E2E gửi `passwordParams: 'sha256'` (6 ký tự) vi phạm `min(8)` ⇒ tạo share 400; web thật gửi `'sha256-v1'` | Trung bình |
+| BUG-15 | E2E cleanup xoá object B2 khi metadata còn trong trash ⇒ `audit:storage` báo CRITICAL `missing_object` giả | Trung bình |
+| BUG-16 | Worker zone-bound (`api.alk.xx.kg`) fetch B2 = **HTTP 525**, kể cả qua service binding; chỉ workers.dev công khai mới đi được | Cao |
 
 ### Changed
 
@@ -41,6 +49,10 @@
 | `infra/check-cloudflare-token.sh` | mỗi quyền dùng token riêng theo nhãn (analytics ≠ dns) ⇒ PASS=5/5 |
 | `infra/check-dns.sh` | xác nhận gateway + route AlkCloud bằng **HTTP thật** thay vì SKIP |
 | `scripts/lib/snapshot.ts` | `ALKCLOUD_WRANGLER_TOML` override ⇒ test guard dùng fixture, không phụ thuộc trạng thái production |
+| `infra/check-b2.sh` | Maintenance key thành **OPTIONAL** (không còn `NOT_CONFIGURED`) · bổ sung kiểm tra region/endpoint |
+| `infra/verify-all.sh` | Thêm check relay B2; thông điệp B2 không còn “blocked” |
+| `infra/check-deployment.sh` | Kiểm tra `B2_RELAY_URL`, `workers_dev=true`, `B2_ALLOWED_HOST`, `B2_RELAY_TOKEN` trong secret bắt buộc |
+| `scripts/e2e-production.ts` | `passwordParams: 'sha256-v1'`; cleanup giữ object B2 cho retention purge |
 
 ---
 

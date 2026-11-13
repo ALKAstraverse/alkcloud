@@ -12,14 +12,23 @@ import type { Hono } from 'hono';
 
 function createStorage(env: Env) {
 	const config = resolveConfig(env);
-	const { endpoint, region, bucket, accessKeyId, secretAccessKey } = config.b2;
+	const { endpoint, region, bucket, accessKeyId, secretAccessKey, relayUrl, relayToken } = config.b2;
 	if (!endpoint || !region || !bucket || !accessKeyId || !secretAccessKey) {
 		return new NotConfiguredStorage();
 	}
 	// WS-B: bọc retry + circuit breaker ⇒ lỗi tạm thời của B2 không làm hỏng
 	// phiên upload/download, và khi B2 đang chết thì fail-fast thay vì treo.
 	return new ResilientStorage(
-		new B2Storage({ endpoint, region, bucket, accessKeyId, secretAccessKey }),
+		new B2Storage({
+			endpoint,
+			region,
+			bucket,
+			accessKeyId,
+			secretAccessKey,
+			// Worker gắn route zone alk.xx.kg fetch B2 trả 525 ⇒ request server-side
+			// đi qua relay workers.dev; presigned URL vẫn trỏ thẳng B2.
+			...(relayUrl && relayToken ? { proxy: { url: relayUrl, token: relayToken } } : {}),
+		}),
 		{
 			// WS-K: lớp lưu trữ không tự log (giữ package độc lập) — nó phát sự
 			// kiện, app nối vào hệ thống log có cấu trúc + redact.

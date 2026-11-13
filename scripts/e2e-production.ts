@@ -416,7 +416,7 @@ async function main(): Promise<void> {
 				maxDownloads: 2,
 				passwordVerifier: await shareVerifier('e2e-password'),
 				passwordSalt: 'e2e-salt-1234',
-				passwordParams: 'sha256',
+				passwordParams: 'sha256-v1',
 			},
 		});
 		shareToken = created.token;
@@ -554,19 +554,16 @@ async function main(): Promise<void> {
 	});
 
 	// ---------------------------------------------------------------- cleanup
-	await step('cleanup: dọn object B2 của file test', async () => {
-		const storage = b2Storage();
-		if (!storage) {
-			skip('cleanup: dọn object B2 của file test', 'thiếu ALKCLOUD_TEST_B2_* — không dọn được object');
-			return 'SKIP (thiếu credential B2)';
-		}
+	// KHÔNG xoá object B2 ngay: file test được đưa vào trash và giữ object cho
+	// tới khi purge (retention 30 ngày). Xoá object sớm tạo trạng thái
+	// "metadata có / object không" ⇒ audit:storage báo CRITICAL sai (BUG-15).
+	await step('cleanup: object B2 giữ cho retention purge (30 ngày)', async () => {
 		if (!objectKey) return 'không có objectKey';
-		const versions = await storage.listObjectVersions(objectKey);
-		for (const version of versions) {
-			await storage.deleteObjectVersion(objectKey, version.versionId);
-		}
-		if (versions.length === 0) await storage.deleteObject(objectKey);
-		return `đã xoá ${objectKey} (${versions.length} version)`;
+		const storage = b2Storage();
+		if (!storage) return 'bỏ qua kiểm tra object (thiếu ALKCLOUD_TEST_B2_*)';
+		const stat = await storage.headObject(objectKey);
+		assert(stat !== null, 'object test phải còn tồn tại cho tới khi purge');
+		return `object còn tồn tại (${stat.size} byte) — purge cron xoá cùng metadata sau 30 ngày`;
 	});
 
 	await step('cleanup: dọn file/folder test', async () => {

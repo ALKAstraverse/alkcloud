@@ -12,6 +12,13 @@ import type {
 import { StorageError } from './port.js';
 import { presignUrl, signRequest, type SigV4Config } from './sigv4.js';
 
+export interface B2ProxyConfig {
+	/** URL của relay (workers.dev) — nhận request đã ký rồi chuyển tiếp tới B2. */
+	url: string;
+	/** Token dùng chung API ↔ relay (header `x-alkcloud-relay-token`). */
+	token: string;
+}
+
 export interface B2StorageConfig {
 	endpoint: string;
 	region: string;
@@ -20,6 +27,12 @@ export interface B2StorageConfig {
 	secretAccessKey: string;
 	/** TTL mặc định cho presigned URL (thiết kế AlkCloud: 5 phút). */
 	defaultExpirySeconds?: number;
+	/**
+	 * Chỉ dùng cho request do Worker gửi (head/multipart/delete/list/get).
+	 * Worker gắn route trong zone `alk.xx.kg` fetch thẳng B2 trả 525 ⇒ đi qua
+	 * relay workers.dev. Presigned URL vẫn trỏ thẳng B2 (client tự gọi).
+	 */
+	proxy?: B2ProxyConfig;
 }
 
 interface XmlTag {
@@ -60,6 +73,7 @@ function decodeXmlEntities(value: string): string {
 export class B2Storage implements ObjectStorage {
 	private readonly config: SigV4Config & { endpoint: string; bucket: string };
 	private readonly defaultExpiry: number;
+	private readonly proxy: B2ProxyConfig | undefined;
 
 	constructor(config: B2StorageConfig) {
 		this.config = {
@@ -71,6 +85,7 @@ export class B2Storage implements ObjectStorage {
 			service: 's3',
 		};
 		this.defaultExpiry = config.defaultExpirySeconds ?? 300;
+		this.proxy = config.proxy;
 	}
 
 	private objectPath(key: string): string {
@@ -146,6 +161,18 @@ export class B2Storage implements ObjectStorage {
 			body: options.body,
 		});
 		// `signed.url` đã chứa canonical query string do signRequest dựng — không nối thêm lần nữa.
+		if (this.proxy) {
+			// Relay chỉ chuyển tiếp; chữ ký vẫn hợp lệ vì host/path/query không đổi.
+			return fetch(this.proxy.url, {
+				method,
+				headers: {
+					...signed.headers,
+					'x-alkcloud-target': signed.url,
+					'x-alkcloud-relay-token': this.proxy.token,
+				},
+				body: options.body,
+			});
+		}
 		return fetch(signed.url, {
 			method,
 			headers: signed.headers,

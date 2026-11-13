@@ -1,0 +1,17 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "alkcloud-b2relay"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+# BẮT BUỘC workers.dev: Worker gắn route trong zone alk.xx.kg fetch B2 trả 525.
+workers_dev = true
+preview_urls = false
+
+[observability]
+enabled = true
+
+[vars]
+# Host B2 cố định (region ca-east-006 — theo key AlkCloud-Runtime).
+B2_ALLOWED_HOST = "s3.ca-east-006.backblazeb2.com"
+
+# Secrets (đặt bằng `wrangler secret put B2_RELAY_TOKEN`):
+#   B2_RELAY_TOKEN                           ← đã set 13/11 (trùng với secret của alkcloud-api)

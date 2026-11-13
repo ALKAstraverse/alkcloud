@@ -112,8 +112,12 @@ fi
 if [[ -n "${ALKCLOUD_TEST_B2_ENDPOINT:-}" && -n "${ALKCLOUD_TEST_B2_APP_KEY:-}" ]]; then
   run_resource "B2 bucket + key" ./infra/check-b2.sh
 else
-  mark_blocked "B2 bucket + key — chưa có credential (B3)"
+  mark_blocked "B2 bucket + key — chưa export ALKCLOUD_TEST_B2_* (B3)"
 fi
+
+# Relay là hạ tầng bắt buộc (Worker gắn route zone bị 525 khi fetch B2) —
+# kiểm tra được mà KHÔNG cần credential.
+run_resource "B2 relay (workers.dev)" ./infra/check-b2-relay.sh
 
 if [[ -n "${CF_API_TOKEN:-}" || -r /home/ubuntu/.cloudflare/token ]]; then
   run_resource "Cloudflare token (analytics read)" ./infra/check-cloudflare-token.sh

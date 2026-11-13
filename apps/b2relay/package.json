@@ -1,0 +1,10 @@
+{
+  "name": "alkcloud-b2relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hop workers.dev duy nhất tới Backblaze B2 (workaround 525 của Worker gắn route zone alk.xx.kg)",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  }
+}

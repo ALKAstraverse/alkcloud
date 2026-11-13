@@ -13,7 +13,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test packages/core/test/*.test.ts packages/db/test/*.test.ts packages/storage/test/*.test.ts packages/auth/test/*.test.ts apps/api/test/*.test.ts apps/web/test/*.test.ts scripts/test/*.test.ts",
+    "test": "node --import tsx --test packages/core/test/*.test.ts packages/db/test/*.test.ts packages/storage/test/*.test.ts packages/auth/test/*.test.ts apps/api/test/*.test.ts apps/web/test/*.test.ts apps/b2relay/test/*.test.ts scripts/test/*.test.ts",
     "build:api": "npm run build -w alkcloud-api",
     "build:web": "npm run build -w alkcloud-web",
     "build": "npm run build:api && npm run build:web",

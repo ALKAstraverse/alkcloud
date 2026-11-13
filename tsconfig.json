@@ -32,6 +32,8 @@
     "apps/api/test/**/*.ts",
     "apps/web/src/**/*.ts",
     "apps/web/src/**/*.tsx",
+    "apps/b2relay/src/**/*.ts",
+    "apps/b2relay/test/**/*.ts",
     "scripts/**/*.ts"
   ],
   "exclude": ["node_modules", "dist", ".wrangler"]

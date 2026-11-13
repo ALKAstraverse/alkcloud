@@ -77,7 +77,9 @@ esac
 if [ -n "$MAINT_KEY_ID" ] && [ -n "$MAINT_APP_KEY" ]; then
   ok "maintenance-key" "đã cấu hình key maintenance (dùng cho backup/list version)"
 else
-  nc "maintenance-key" "chưa có key maintenance (backup B2 qua rclone sẽ không chạy được)"
+  # Key maintenance là TÙY CHỌN (chỉ cần cho backup B2 bằng rclone) — không
+  # được biến thành NOT_CONFIGURED khiến exit code 2 và chặn verify-all.
+  printf 'OPTIONAL          maintenance-key — chưa có (tùy chọn, chỉ cần cho backup B2 qua rclone)\n'
 fi
 
 printf '\nTổng kết: PASS=%s FAIL=%s NOT_CONFIGURED=%s PERMISSION_DENIED=%s SKIPPED=%s\n' \

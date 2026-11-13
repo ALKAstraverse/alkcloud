@@ -19,6 +19,8 @@ export interface Env {
 	B2_SECRET_ACCESS_KEY?: string;
 	B2_MAINTENANCE_ACCESS_KEY_ID?: string;
 	B2_MAINTENANCE_SECRET_ACCESS_KEY?: string;
+	B2_RELAY_URL?: string;
+	B2_RELAY_TOKEN?: string;
 	ALKCLOUD_DAILY_API_BUDGET?: string;
 	ALKCLOUD_ACCOUNT_DAILY_REQUEST_LIMIT?: string;
 	ALKCLOUD_QUOTA_STATE_TTL_SECONDS?: string;
@@ -73,6 +75,8 @@ export interface ResolvedConfig {
 		secretAccessKey: string | null;
 		maintenanceAccessKeyId: string | null;
 		maintenanceSecretAccessKey: string | null;
+		relayUrl: string | null;
+		relayToken: string | null;
 	};
 }
 
@@ -107,6 +111,8 @@ export function resolveConfig(env: Env): ResolvedConfig {
 			secretAccessKey: env.B2_SECRET_ACCESS_KEY ?? null,
 			maintenanceAccessKeyId: env.B2_MAINTENANCE_ACCESS_KEY_ID ?? null,
 			maintenanceSecretAccessKey: env.B2_MAINTENANCE_SECRET_ACCESS_KEY ?? null,
+			relayUrl: env.B2_RELAY_URL ?? null,
+			relayToken: env.B2_RELAY_TOKEN ?? null,
 		},
 	};
 }

@@ -37,7 +37,23 @@ grep -q 'workers_dev = false' "$WRANGLER" \
   && ok "workers_dev = false" \
   || fail "workers_dev phải false (chỉ dùng route production)"
 
-for secret in AUTH_PEPPER BOOTSTRAP_SETUP_TOKEN B2_ENDPOINT B2_REGION B2_BUCKET B2_ACCESS_KEY_ID B2_SECRET_ACCESS_KEY B2_MAINTENANCE_ACCESS_KEY_ID B2_MAINTENANCE_SECRET_ACCESS_KEY TURNSTILE_SITE_KEY TURNSTILE_SECRET_KEY ALERT_WEBHOOK_URL CLOUDFLARE_ANALYTICS_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+grep -q 'B2_RELAY_URL = "https://alkcloud-b2relay.alkev.workers.dev"' "$WRANGLER" \
+  && ok "B2_RELAY_URL trỏ relay workers.dev" \
+  || fail "B2_RELAY_URL chưa khai báo (Worker gắn route bị 525 khi fetch B2)"
+
+RELAY="apps/b2relay/wrangler.toml"
+if [[ -f "$RELAY" ]]; then
+  grep -q 'workers_dev = true' "$RELAY" \
+    && ok "relay: workers_dev = true (bắt buộc)" \
+    || fail "relay phải workers_dev = true"
+  grep -q 'B2_ALLOWED_HOST = "s3.ca-east-006.backblazeb2.com"' "$RELAY" \
+    && ok "relay: B2_ALLOWED_HOST đúng" \
+    || fail "relay: B2_ALLOWED_HOST không khớp"
+else
+  fail "thiếu $RELAY"
+fi
+
+for secret in AUTH_PEPPER BOOTSTRAP_SETUP_TOKEN B2_ENDPOINT B2_REGION B2_BUCKET B2_ACCESS_KEY_ID B2_SECRET_ACCESS_KEY B2_RELAY_TOKEN B2_MAINTENANCE_ACCESS_KEY_ID B2_MAINTENANCE_SECRET_ACCESS_KEY TURNSTILE_SITE_KEY TURNSTILE_SECRET_KEY ALERT_WEBHOOK_URL CLOUDFLARE_ANALYTICS_TOKEN CLOUDFLARE_ACCOUNT_ID; do
   grep -q "$secret" "$WRANGLER" && ok "secret được khai báo: $secret" || fail "thiếu khai báo secret: $secret"
 done
 

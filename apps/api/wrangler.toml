@@ -36,18 +36,21 @@ ALKCLOUD_ACCOUNT_DAILY_REQUEST_LIMIT = "100000"
 ALKCLOUD_QUOTA_STATE_TTL_SECONDS = "60"
 # Account id không phải bí mật (hiện trong URL dashboard) ⇒ để ở [vars].
 CLOUDFLARE_ACCOUNT_ID = "c3f46654371899594a8ddf59b863d211"
+# Hop workers.dev duy nhất tới B2 (Worker gắn route zone bị 525 khi fetch B2).
+B2_RELAY_URL = "https://alkcloud-b2relay.alkev.workers.dev"
 ENVIRONMENT = "production"
 
 # Secrets (KHÔNG commit — đặt bằng `wrangler secret put <NAME>`):
 #   AUTH_PEPPER                              ← đã set 13/11
 #   BOOTSTRAP_SETUP_TOKEN                    ← đã set 13/11
 #   CLOUDFLARE_ANALYTICS_TOKEN               ← đã set 13/11 (token read-only)
-#   B2_ENDPOINT                              ← BLOCKED (credential B2 không hợp lệ)
-#   B2_REGION                                ← BLOCKED
-#   B2_BUCKET                                ← BLOCKED
-#   B2_ACCESS_KEY_ID                         ← BLOCKED
-#   B2_SECRET_ACCESS_KEY                     ← BLOCKED
-#   B2_MAINTENANCE_ACCESS_KEY_ID             ← BLOCKED
+#   B2_ENDPOINT                              ← đã set 13/11
+#   B2_REGION                                ← đã set 13/11
+#   B2_BUCKET                                ← đã set 13/11
+#   B2_ACCESS_KEY_ID                         ← đã set 13/11
+#   B2_SECRET_ACCESS_KEY                     ← đã set 13/11
+#   B2_RELAY_TOKEN                           ← đã set 13/11 (trùng secret của alkcloud-b2relay)
+#   B2_MAINTENANCE_ACCESS_KEY_ID             ← BLOCKED (backup B2 qua rclone chưa cần)
 #   B2_MAINTENANCE_SECRET_ACCESS_KEY         ← BLOCKED
 #   TURNSTILE_SITE_KEY                       ← tùy chọn (Turnstile không bắt buộc ở server)
 #   TURNSTILE_SECRET_KEY                     ← tùy chọn
