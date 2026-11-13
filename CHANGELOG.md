@@ -5,6 +5,45 @@
 
 ---
 
+## [Unreleased] — Phase 5 (13/11/2026) — DEPLOY PRODUCTION
+
+> Trạng thái: **PARTIALLY DEPLOYED**. API + Web + D1 + DNS + owner + cron đã chạy thật trên
+> Cloudflare; **object storage (B2) còn BLOCKED** vì credential owner không hợp lệ.
+> Bằng chứng: `docs/34-PRODUCTION-DEPLOYMENT-REPORT.md` · `docs/35-PRODUCTION-VERIFICATION.md`.
+
+### Added
+
+| Hạng mục | Nội dung | Tài liệu |
+| :--- | :--- | :--- |
+| **Production deploy** | Worker `alkcloud-api` (route `api.alk.xx.kg/api/v1/*`), Worker `alkcloud-web` (`cloud.alk.xx.kg`), D1 `alkcloud` (16 bảng, migration 0001…0005), CNAME `cloud` (proxied) | `docs/34` §2 |
+| **Owner bootstrap CLI** | `scripts/bootstrap-owner.ts` — Argon2id, idempotent, lưu 10 recovery code mode 600 | `docs/35` §3 |
+| **Xác minh production** | `scripts/verify-auth-production.ts` (13 kiểm tra), `scripts/verify-monitoring-production.ts`, `scripts/run-e2e-production.ts` (wrapper E2E, tự tính authKey) | `docs/35` |
+| **Loader token theo nhãn** | `infra/lib/cf-token.sh` — nạp token Cloudflare theo label (`Edit Cloudflare Workers`, `AlkCloud-Baseline-ReadOnly`, …), truyền qua env (không argv) | `docs/34` §3 |
+| **CSP cho static assets** | `apps/web/public/_headers` — Workers Static Assets phục vụ asset **không** gọi Worker ⇒ phải khai báo header qua file `_headers` | `docs/34` §4 |
+
+### Fixed
+
+| ID | Lỗi | Mức độ |
+| :--- | :--- | :--- |
+| BUG-02 | `backup-d1.ts` bỏ qua `--remote` ⇒ file backup không phản ánh dữ liệu production | Cao |
+| BUG-03 | `e2e-production.ts`: message `assert()` tiêu thụ body ⇒ “Body has already been read” | Trung bình |
+| BUG-04 | Prefix test có `/` ⇒ API cấm ký tự phân tách trong tên ⇒ payload 400 (lỗi ở harness, API đúng) | Trung bình |
+| BUG-08 | `restore-drill.ts` không nhận file backup có sẵn ⇒ chưa từng chứng minh restore từ backup production | Trung bình |
+| BUG-09 | `release-manifest.ts` mất danh sách secret khi tên secret kèm chú thích trạng thái | Cao |
+| BUG-10 | Test chaos `T5` phụ thuộc `wrangler.toml` thật ⇒ không kiểm chứng được guard placeholder | Trung bình |
+| BUG-12 | `alkApiCallsUsed` **luôn = 0** (Cloudflare gom request Worker-route vào `__unknown__`) ⇒ cảnh báo ngân sách riêng không bao giờ kích hoạt | Cao |
+
+### Changed
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| `infra/verify-all.sh` | restore drill chạy **từ file backup** (thay vì D1 local thường rỗng) · E2E dùng wrapper production · thêm bước kiểm tra gateway bằng HTTP |
+| `infra/check-cloudflare-token.sh` | mỗi quyền dùng token riêng theo nhãn (analytics ≠ dns) ⇒ PASS=5/5 |
+| `infra/check-dns.sh` | xác nhận gateway + route AlkCloud bằng **HTTP thật** thay vì SKIP |
+| `scripts/lib/snapshot.ts` | `ALKCLOUD_WRANGLER_TOML` override ⇒ test guard dùng fixture, không phụ thuộc trạng thái production |
+
+---
+
 ## [Unreleased] — Phase 4 (12/11/2026)
 
 > Trạng thái: **chưa deploy**. Mọi thay đổi dưới đây đã qua test local (347 pass / 0 fail)
