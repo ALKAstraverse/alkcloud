@@ -27,8 +27,23 @@ export interface SnapshotTarget {
 }
 
 /** Đọc database_name/database_id/bucket từ wrangler.toml (không phải secret). */
+/**
+ * Đường dẫn wrangler.toml — override được bằng `ALKCLOUD_WRANGLER_TOML`.
+ *
+ * BUG-10 (13/11/2026, Phase 5): guard "database_id còn placeholder" (B6) trước
+ * đây chỉ kiểm tra file toml thật của repo. Sau khi production đã điền
+ * database_id thật, guard không còn kích hoạt ⇒ test chaos T5 không còn
+ * kiểm chứng được hành vi an toàn này. Env override cho phép test dùng
+ * fixture cố định mà không phụ thuộc trạng thái production.
+ */
+export function wranglerTomlPath(): string {
+	return process.env.ALKCLOUD_WRANGLER_TOML
+		? resolve(process.env.ALKCLOUD_WRANGLER_TOML)
+		: resolve('apps/api/wrangler.toml');
+}
+
 export function readTarget(scope: 'local' | 'remote'): SnapshotTarget {
-	const configPath = resolve('apps/api/wrangler.toml');
+	const configPath = wranglerTomlPath();
 	if (!existsSync(configPath)) throw new Error(`không tìm thấy ${configPath}`);
 	const content = readFileSync(configPath, 'utf8');
 	const databaseName = /^database_name\s*=\s*"([^"]+)"/m.exec(content)?.[1];
@@ -54,7 +69,7 @@ export function queryD1<T = Record<string, unknown>>(
 		[
 			'wrangler',
 			'-c',
-			'apps/api/wrangler.toml',
+			wranglerTomlPath(),
 			'd1',
 			'execute',
 			'alkcloud',

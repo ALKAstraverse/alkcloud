@@ -26,15 +26,21 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { queryD1 } from './lib/snapshot.js';
+import { DrillArgsError, parseDrillArgs } from './lib/drill-args.js';
 import { countRows, listTables, splitDump } from '../packages/db/src/sql-dump.js';
 
 const argv = process.argv.slice(2);
-if (argv.includes('--remote')) {
-	console.error('Từ chối: restore drill KHÔNG chạy trên remote (production).');
-	process.exit(2);
+let drillArgs: ReturnType<typeof parseDrillArgs>;
+try {
+	drillArgs = parseDrillArgs(argv);
+} catch (error) {
+	if (error instanceof DrillArgsError) {
+		console.error(error.message);
+		process.exit(2);
+	}
+	throw error;
 }
-
-const jsonOut = argv.includes('--json') ? argv[argv.indexOf('--json') + 1] : undefined;
+const jsonOut = drillArgs.json;
 
 interface StepResult {
 	name: string;
@@ -72,25 +78,35 @@ function main(): void {
 	const dumpFile = join(tempRoot, 'drill-dump.sql');
 
 	try {
-		// ---------------------------------------------------------- 1. export nguồn
-		runWrangler([
-			'wrangler',
-			'-c',
-			'apps/api/wrangler.toml',
-			'd1',
-			'export',
-			'alkcloud',
-			'--local',
-			'--output',
-			dumpFile,
-			'--skip-confirmation',
-		]);
-		const dump = readFileSync(dumpFile, 'utf8');
+		// ---------------------------------------------------------- 1. lấy dump nguồn
+		// `--file <dump>` ⇒ dùng dump có sẵn (ví dụ backup production tải về).
+		// Không có `--file` ⇒ export D1 local như trước.
+		let dump: string;
+		let sourceLabel: string;
+		if (drillArgs.file) {
+			dump = readFileSync(resolve(drillArgs.file), 'utf8');
+			sourceLabel = `file có sẵn: ${resolve(drillArgs.file)}`;
+		} else {
+			runWrangler([
+				'wrangler',
+				'-c',
+				'apps/api/wrangler.toml',
+				'd1',
+				'export',
+				'alkcloud',
+				'--local',
+				'--output',
+				dumpFile,
+				'--skip-confirmation',
+			]);
+			dump = readFileSync(dumpFile, 'utf8');
+			sourceLabel = 'D1 local (wrangler --local)';
+		}
 		if (!/CREATE TABLE/i.test(dump)) {
-			record('export D1 local', 'FAIL', 'dump không có CREATE TABLE');
+			record('lấy dump nguồn', 'FAIL', 'dump không có CREATE TABLE');
 			process.exit(1);
 		}
-		record('export D1 local', 'PASS', `${(dump.length / 1024).toFixed(1)} KiB SQL`);
+		record('lấy dump nguồn', 'PASS', `${(dump.length / 1024).toFixed(1)} KiB SQL — ${sourceLabel}`);
 
 		// ---------------------------------------------------------- 2. đối chiếu số dòng nguồn
 		const sourceCounts = countRows(dump);
@@ -230,7 +246,7 @@ function main(): void {
 		const report = {
 			generatedAt: new Date().toISOString(),
 			drill: 'restore-d1-local',
-			source: 'D1 local (wrangler --local)',
+			source: sourceLabel,
 			target: 'D1 local isolate (--persist-to state tạm)',
 			steps,
 			tableCounts,

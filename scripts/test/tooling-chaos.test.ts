@@ -8,13 +8,18 @@ import { splitDump, countRows, listTables, DANGEROUS_PATTERNS } from '../../pack
 
 const ROOT = resolve(import.meta.dirname, '../..');
 
-function runScript(script: string, args: string[] = []): { status: number; stdout: string; stderr: string } {
+function runScript(
+	script: string,
+	args: string[] = [],
+	env: Record<string, string> = {},
+): { status: number; stdout: string; stderr: string } {
 	try {
 		const stdout = execFileSync('node', ['--import', 'tsx', script, ...args], {
 			cwd: ROOT,
 			encoding: 'utf8',
 			stdio: ['ignore', 'pipe', 'pipe'],
 			timeout: 120_000,
+			env: { ...process.env, ...env },
 		});
 		return { status: 0, stdout, stderr: '' };
 	} catch (error) {
@@ -55,9 +60,33 @@ describe('chaos — tooling: backup/restore với dữ liệu hỏng', () => {
 	});
 
 	it('T5. audit-storage.ts --remote từ chối khi database_id còn placeholder', () => {
-		const result = runScript('scripts/audit-storage.ts', ['--remote']);
-		assert.notEqual(result.status, 0);
-		assert.match(result.stderr + result.stdout, /placeholder|REPLACE_WITH/);
+		// Dùng FIXTURE có database_id placeholder — không phụ thuộc trạng thái
+		// production (sau 13/11/2026 database_id thật đã được điền trong repo).
+		const dir = mkdtempSync(join(tmpdir(), 'alkcloud-chaos-toml-'));
+		try {
+			const fixture = join(dir, 'wrangler.toml');
+			writeFileSync(
+				fixture,
+				`name = "alkcloud-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "alkcloud"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+`,
+				'utf8',
+			);
+			const result = runScript('scripts/audit-storage.ts', ['--remote'], {
+				ALKCLOUD_WRANGLER_TOML: fixture,
+			});
+			assert.notEqual(result.status, 0);
+			assert.match(result.stderr + result.stdout, /placeholder|REPLACE_WITH/);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it('T6. verify-backup phát hiện câu lệnh nguy hiểm trong dump', () => {

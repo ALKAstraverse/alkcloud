@@ -78,7 +78,10 @@ describe('P3-M0 — hysteresis của quota mode phải được lưu lại (auto
 						viewer: {
 							accounts: [
 								{
-									workersInvocationsAdaptive: [
+									all: [
+										{ sum: { requests: 0 }, dimensions: { scriptName: 'alkcloud-api' } },
+									],
+									alk: [
 										{ sum: { requests: 0 }, dimensions: { scriptName: 'alkcloud-api' } },
 									],
 								},
@@ -102,6 +105,56 @@ describe('P3-M0 — hysteresis của quota mode phải được lưu lại (auto
 			await runCron(db, base + 3 * HOUR, envWithAnalytics);
 			state = await db.getSystemState<{ mode: string; consecutiveBelow: number }>('quota_state');
 			assert.equal(state?.mode, 'CONSERVE', 'phải hạ 1 bậc sau 3 chu kỳ dưới ngưỡng');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+});
+
+describe('BUG-12 — số request của riêng AlkCloud phải lấy được khi Worker chạy qua route', () => {
+	it('Worker qua route bị gom vào `__unknown__` ⇒ phải lấy alkApiCallsUsed từ tập lọc server-side', async () => {
+		const db = await makeDb();
+		const env = makeEnv({
+			CLOUDFLARE_ANALYTICS_TOKEN: 'token-analytics',
+			CLOUDFLARE_ACCOUNT_ID: 'c3f46654371899594a8ddf59b863d211',
+		});
+		// Hình thức phản hồi thật của Cloudflare (13/11/2026): truy vấn "tất cả
+		// script" KHÔNG có dòng `alkcloud-api` (request của Worker chạy qua route
+		// nằm trong nhóm `__unknown__`), chỉ truy vấn lọc theo scriptName mới thấy.
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			new Response(
+				JSON.stringify({
+					data: {
+						viewer: {
+							accounts: [
+								{
+									all: [
+										{ sum: { requests: 284 }, dimensions: { scriptName: 'api-gateway' } },
+										{ sum: { requests: 143 }, dimensions: { scriptName: '__unknown__' } },
+									],
+									alk: [
+										{ sum: { requests: 137 }, dimensions: { scriptName: 'alkcloud-api' } },
+									],
+								},
+							],
+						},
+					},
+				}),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			)) as typeof fetch;
+		try {
+			await runCron(db, Date.parse('2026-11-13T02:17:00.000Z'), env);
+			const state = await db.getSystemState<{
+				accountRequestsUsed: number;
+				alkApiCallsUsed: number;
+			}>('quota_state');
+			assert.equal(state?.accountRequestsUsed, 427, 'tổng request toàn account');
+			assert.equal(
+				state?.alkApiCallsUsed,
+				137,
+				'số request của riêng AlkCloud phải lấy từ tập lọc server-side (không phải 0)',
+			);
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

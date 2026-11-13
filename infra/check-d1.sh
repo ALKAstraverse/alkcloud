@@ -26,6 +26,8 @@ denied() { printf 'PERMISSION_DENIED %s — %s\n' "$1" "$2"; PERMISSION_DENIED=$
 skip()   { printf 'SKIPPED           %s — %s\n' "$1" "$2"; SKIPPED=$((SKIPPED+1)); }
 
 cd "$(dirname "$0")/.."
+. infra/lib/cf-token.sh
+alkcloud_cf_init || true
 command -v python3 >/dev/null 2>&1 || { echo "FAIL — thiếu python3"; exit 4; }
 command -v npx >/dev/null 2>&1 || { echo "FAIL — thiếu npx"; exit 4; }
 

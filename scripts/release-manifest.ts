@@ -111,8 +111,15 @@ function parseWranglerToml(text: string): {
  * Chỉ trả về TÊN, không bao giờ giá trị.
  */
 function requiredSecrets(wranglerText: string): string[] {
-	const block = /# Secrets \(KHÔNG commit[^)]*\):([\s\S]*?)(?=\n\[|$)/.exec(wranglerText)?.[1] ?? '';
-	return [...block.matchAll(/^\s*#\s*([A-Z][A-Z0-9_]{2,})\s*$/gm)].map((m) => m[1]!).sort();
+	// BUG-09 (13/11/2026, Phase 5): regex cũ neo vào câu chữ đầu block
+	// (`# Secrets (KHÔNG commit ...):`) và chỉ nhận tên secret nằm TRÒN dòng.
+	// Khi thêm chú thích trạng thái (`#   AUTH_PEPPER   ← đã set 13/11`) ⇒
+	// danh sách secret bị rỗng ⇒ release manifest mất danh sách secret bắt buộc.
+	// Nay nhận mọi block bắt đầu bằng `# Secrets` và tên có thể kèm chú thích.
+	const block = /#\s*Secrets[^\n]*\n([\s\S]*?)(?=\n\[|$)/.exec(wranglerText)?.[1] ?? '';
+	return [...block.matchAll(/^\s*#\s*([A-Z][A-Z0-9_]{2,})(?=\s|$).*$/gm)]
+		.map((m) => m[1]!)
+		.sort();
 }
 
 function collectArtifacts(): ArtifactEntry[] {

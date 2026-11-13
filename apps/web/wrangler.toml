@@ -5,17 +5,21 @@ compatibility_date = "2026-10-01"
 workers_dev = false
 preview_urls = false
 
+# Route cho SPA — domain `cloud.alk.xx.kg` (zone alk.xx.kg).
+# Chỉ phủ domain của AlkCloud; KHÔNG đụng route nào của gateway hay service khác.
+#
+# ⚠️ `routes` phải đặt TRƯỚC mọi bảng TOML khác ([assets] ...) — nếu đặt sau,
+# nó rơi vào bảng trước đó và wrangler báo "Unexpected fields found in assets
+# field: routes" ⇒ deploy xong nhưng KHÔNG có target nào được deploy.
+routes = [
+  { pattern = "cloud.alk.xx.kg/*", zone_name = "alk.xx.kg" },
+]
+
 # Static assets: React SPA + trang chia sẻ tĩnh.
-# ⚠️ deploy sẽ tạo Worker `alkcloud-web` — cần owner duyệt.
 [assets]
 directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-
-# Route cho SPA (chưa có DNS `cloud.alk.xx.kg` — owner action required).
-# routes = [
-#   { pattern = "cloud.alk.xx.kg/*", zone_name = "alk.xx.kg" },
-# ]
 
 [observability]
 enabled = true

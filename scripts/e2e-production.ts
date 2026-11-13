@@ -28,7 +28,9 @@ const ORIGIN = process.env.ALKCLOUD_E2E_ORIGIN ?? 'https://cloud.alk.xx.kg';
 const SETUP_TOKEN = process.env.ALKCLOUD_E2E_SETUP_TOKEN ?? '';
 const AUTH_KEY = process.env.ALKCLOUD_E2E_AUTH_KEY ?? '';
 const EMAIL = process.env.ALKCLOUD_E2E_EMAIL ?? '';
-const PREFIX = 'alkcloud-e2e/';
+// KHÔNG được chứa '/' — API cấm ký tự phân tách trong tên (nameSchema).
+// Prefix cũ 'alkcloud-e2e/' làm mọi payload folder/upload/share bị 400.
+const PREFIX = 'alkcloud-e2e-';
 
 interface StepResult {
 	name: string;
@@ -40,9 +42,29 @@ interface StepResult {
 const results: StepResult[] = [];
 let cookie = '';
 let csrf = '';
+/**
+ * B2 có được cấu hình không (đọc từ /system/health/deep).
+ *
+ * Khi KHÔNG có B2 ⇒ các bước upload/download/share không thể chạy. Báo
+ * `BLOCKED` (vướng môi trường) chứ KHÔNG báo `FAIL` — FAIL ám chỉ lỗi sản
+ * phẩm, còn đây là thiếu credential hạ tầng. Theo quy ước của cả repo:
+ * SKIP/BLOCKED không tính là PASS.
+ */
+let storageConfigured = false;
 
 function log(line: string): void {
 	console.log(line);
+}
+
+/**
+ * Bước phụ thuộc B2: nếu B2 chưa cấu hình ⇒ BLOCKED (không phải FAIL).
+ */
+async function storageStep(name: string, fn: () => Promise<string>): Promise<boolean> {
+	if (!storageConfigured) {
+		blocked(name, 'B2 chưa cấu hình (storageConfigured=false) — cần credential B2 hợp lệ');
+		return false;
+	}
+	return step(name, fn);
 }
 
 async function step(name: string, fn: () => Promise<string>): Promise<boolean> {
@@ -164,7 +186,10 @@ async function main(): Promise<void> {
 					authParams: 'e2e-params-1234',
 				},
 			});
-			assert(response.status === 201, `bootstrap trả ${response.status}: ${(await response.text()).slice(0, 160)}`);
+			assert(
+				response.status === 201,
+				`bootstrap trả ${response.status}: ${(await response.clone().text()).slice(0, 160)}`,
+			);
 			const body = (await response.json()) as { session: { csrfToken: string } };
 			csrf = body.session.csrfToken;
 			authenticated = true;
@@ -175,7 +200,10 @@ async function main(): Promise<void> {
 			method: 'POST',
 			body: { email: EMAIL, authKey: AUTH_KEY },
 		});
-		assert(response.status === 200, `login trả ${response.status}: ${(await response.text()).slice(0, 160)}`);
+		assert(
+			response.status === 200,
+			`login trả ${response.status}: ${(await response.clone().text()).slice(0, 160)}`,
+		);
 		const body = (await response.json()) as { session: { csrfToken: string } };
 		csrf = body.session.csrfToken;
 		authenticated = true;
@@ -186,6 +214,15 @@ async function main(): Promise<void> {
 		blocked('storage/sharing', 'không đăng nhập được ⇒ các bước còn lại không chạy');
 		report();
 		return;
+	}
+
+	// Trạng thái lớp lưu trữ — quyết định bước nào chạy được, bước nào BLOCKED.
+	try {
+		const deep = await apiJson<{ storageConfigured: boolean }>('/system/health/deep');
+		storageConfigured = Boolean(deep.storageConfigured);
+		log(`info: storageConfigured=${storageConfigured}`);
+	} catch {
+		storageConfigured = false;
 	}
 
 	// ------------------------------------------------- CSRF / Origin enforcement
@@ -239,7 +276,7 @@ async function main(): Promise<void> {
 	// ---------------------------------------------------------------- upload
 	let fileId = '';
 	let objectKey = '';
-	await step('upload: single-part (presign PUT + complete)', async () => {
+	await storageStep('upload: single-part (presign PUT + complete)', async () => {
 		const session = await apiJson<{
 			uploadSessionId: string;
 			mode: string;
@@ -273,7 +310,7 @@ async function main(): Promise<void> {
 		return `file ${fileId}, object ${objectKey}`;
 	});
 
-	await step('upload: multipart (presign part + complete thiếu part bị chặn + abort)', async () => {
+	await storageStep('upload: multipart (presign part + complete thiếu part bị chặn + abort)', async () => {
 		const session = await apiJson<{
 			uploadSessionId: string;
 			mode: string;
@@ -317,7 +354,7 @@ async function main(): Promise<void> {
 	});
 
 	// ---------------------------------------------------------------- download
-	await step('download: full + Range 206 + content-disposition', async () => {
+	await storageStep('download: full + Range 206 + content-disposition', async () => {
 		const response = await api(`/files/${fileId}/download`, { raw: true });
 		assert(response.status === 200, `download trả ${response.status}`);
 		const text = await response.text();
@@ -332,7 +369,7 @@ async function main(): Promise<void> {
 		return `200 (5 byte) + 206 (3 byte), ${disposition.slice(0, 48)}`;
 	});
 
-	await step('download: owner luôn được phép kể cả EMERGENCY (assert capability)', async () => {
+	await storageStep('download: owner luôn được phép kể cả EMERGENCY (assert capability)', async () => {
 		const open = await api(`/files/${fileId}/open`, { raw: true });
 		assert(open.status === 200, `presign GET phải 200, trả ${open.status}`);
 		const body = (await open.json()) as { url: string; expiresAt: string };
@@ -341,7 +378,7 @@ async function main(): Promise<void> {
 	});
 
 	// ---------------------------------------------------------------- rename/move/trash
-	await step('files: rename + move + trash + restore', async () => {
+	await storageStep('files: rename + move + trash + restore', async () => {
 		const rename = await api(`/files/${fileId}`, { method: 'PATCH', body: { name: `${PREFIX}renamed.txt` } });
 		assert(rename.status === 200, `rename trả ${rename.status}`);
 		const move = await api(`/files/${fileId}/move`, { method: 'POST', body: { folderId } });
@@ -358,7 +395,7 @@ async function main(): Promise<void> {
 		return 'rename/move/trash/restore OK';
 	});
 
-	await step('files: purge trước hạn bị chặn (409)', async () => {
+	await storageStep('files: purge trước hạn bị chặn (409)', async () => {
 		await api(`/files/${fileId}`, { method: 'DELETE' });
 		const purge = await api(`/files/${fileId}/purge`, { method: 'DELETE' });
 		assert(purge.status === 409, `purge trước hạn phải 409, trả ${purge.status}`);
@@ -370,7 +407,7 @@ async function main(): Promise<void> {
 	// ---------------------------------------------------------------- sharing
 	let shareToken = '';
 	let shareId = '';
-	await step('sharing: tạo share có mật khẩu + metadata ẩn trước unlock', async () => {
+	await storageStep('sharing: tạo share có mật khẩu + metadata ẩn trước unlock', async () => {
 		const created = await apiJson<{ share: { id: string }; token: string }>('/shares', {
 			method: 'POST',
 			body: {
@@ -394,7 +431,7 @@ async function main(): Promise<void> {
 		return `share ${shareId}, metadata ẩn OK`;
 	});
 
-	await step('sharing: unlock sai mật khẩu bị 403', async () => {
+	await storageStep('sharing: unlock sai mật khẩu bị 403', async () => {
 		const response = await api('/public/share/unlock', {
 			method: 'POST',
 			body: { passwordVerifier: await shareVerifier('wrong-password') },
@@ -404,7 +441,7 @@ async function main(): Promise<void> {
 		return '403 đúng';
 	});
 
-	await step('sharing: unlock đúng + download bằng grant header', async () => {
+	await storageStep('sharing: unlock đúng + download bằng grant header', async () => {
 		const unlock = await apiJson<{ grant: string; share: { unlocked: boolean } }>('/public/share/unlock', {
 			method: 'POST',
 			body: { passwordVerifier: await shareVerifier('e2e-password') },
@@ -422,7 +459,7 @@ async function main(): Promise<void> {
 		return 'grant header OK';
 	});
 
-	await step('sharing: download không grant bị 403', async () => {
+	await storageStep('sharing: download không grant bị 403', async () => {
 		const response = await api('/public/share/download', {
 			raw: true,
 			headers: { 'x-share-token': shareToken },
@@ -431,7 +468,7 @@ async function main(): Promise<void> {
 		return '403 đúng';
 	});
 
-	await step('sharing: maxDownloads + revoke', async () => {
+	await storageStep('sharing: maxDownloads + revoke', async () => {
 		const unlock = await apiJson<{ grant: string }>('/public/share/unlock', {
 			method: 'POST',
 			body: { passwordVerifier: await shareVerifier('e2e-password') },
@@ -464,16 +501,22 @@ async function main(): Promise<void> {
 		assert(typeof quota.mode === 'string', 'quota phải có mode');
 		const usage = await apiJson<{ usedBytes: number }>('/system/usage');
 		assert(typeof usage.usedBytes === 'number', 'usage phải có usedBytes');
-		const deep = await apiJson<{ ok: boolean }>('/system/health/deep');
-		assert(deep.ok === true, `health/deep phải ok, trả ${JSON.stringify(deep)}`);
-		return `mode=${quota.mode}, usedBytes=${usage.usedBytes}`;
+		// Contract thật: { status, bootstrapped, time, storageConfigured, analyticsConfigured }.
+		const deep = await apiJson<{
+			status: string;
+			storageConfigured: boolean;
+			analyticsConfigured: boolean;
+		}>('/system/health/deep');
+		assert(deep.status === 'ok', `health/deep phải status=ok, trả ${JSON.stringify(deep)}`);
+		return `mode=${quota.mode}, usedBytes=${usage.usedBytes}, storage=${deep.storageConfigured}, analytics=${deep.analyticsConfigured}`;
 	});
 
 	await step('system: audit log ghi được thao tác', async () => {
-		const audit = await apiJson<{ entries: unknown[] }>('/system/audit?limit=10');
-		assert(Array.isArray(audit.entries), 'audit phải trả mảng entries');
-		assert(audit.entries.length > 0, 'audit log rỗng');
-		return `${audit.entries.length} entry gần nhất`;
+		// Contract thật: { events: [...] }.
+		const audit = await apiJson<{ events: Array<{ action: string }> }>('/system/audit?limit=10');
+		assert(Array.isArray(audit.events), 'audit phải trả mảng events');
+		assert(audit.events.length > 0, 'audit log rỗng');
+		return `${audit.events.length} entry gần nhất`;
 	});
 
 	// ---------------------------------------------------------------- backup
@@ -493,7 +536,16 @@ async function main(): Promise<void> {
 				'backups/e2e-verify.sql',
 				'--skip-confirmation',
 			],
-			{ encoding: 'utf8', stdio: 'pipe' },
+			{
+				encoding: 'utf8',
+				stdio: 'pipe',
+				// wrangler cần token trong env (không truyền qua argv).
+				env: {
+					...process.env,
+					CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN ?? '',
+					CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID ?? '',
+				},
+			},
 		);
 		const { statSync } = await import('node:fs');
 		const size = statSync('backups/e2e-verify.sql').size;

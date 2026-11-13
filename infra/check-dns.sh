@@ -25,10 +25,10 @@ skip()   { printf 'SKIPPED           %s — %s\n' "$1" "$2"; SKIPPED=$((SKIPPED+
 command -v python3 >/dev/null 2>&1 || { echo "FAIL — thiếu python3"; exit 4; }
 
 ZONE_ID="${CLOUDFLARE_ZONE_ID:-882ba5243fa3f704c450f821965fa950}"
-TOKEN="${CF_API_TOKEN:-}"
-if [ -z "$TOKEN" ] && [ -r /home/ubuntu/.cloudflare/token ]; then
-  TOKEN="$(grep -m1 '^CF_API_TOKEN=' /home/ubuntu/.cloudflare/token | cut -d= -f2- | tr -d '\r\n')"
-fi
+. "$(dirname "$0")/lib/cf-token.sh"
+# Kiểm tra DNS cần token có Zone:DNS:Read ⇒ mặc định dùng label DNS.
+export CF_TOKEN_LABEL="${CF_TOKEN_LABEL:-Edit Zone DNS}"
+TOKEN="$(alkcloud_load_cf_token)"
 
 printf '== DNS & routing (read-only) ==\n'
 
@@ -86,10 +86,18 @@ else
   fail "route:api" "thiếu route api.alk.xx.kg/api/v1/* trong apps/api/wrangler.toml"
 fi
 
-# 4. Gateway hiện hữu: KHÔNG được sửa — chỉ nhắc nhở
+# 4. Gateway hiện hữu: KHÔNG được sửa — nhưng phải XÁC NHẬN bằng HTTP thật
+#    rằng gateway vẫn phục vụ được ở hostname cũ, còn route dài hơn
+#    (/api/v1/*) của AlkCloud mới được ưu tiên (không chen vào giữa).
 if [ -d /home/ubuntu/cf-api-gateway ]; then
   if grep -q 'api.alk.xx.kg' /home/ubuntu/cf-api-gateway/wrangler.jsonc 2>/dev/null; then
-    skip "gateway:api-gateway" "gateway hiện hữu dùng api.alk.xx.kg — route /api/v1/* của AlkCloud phải CÙNG zone, Cloudflare sẽ ưu tiên route có pattern dài hơn (cần xác nhận sau khi deploy)"
+    GATEWAY_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://api.alk.xx.kg/health || echo 000)"
+    ALK_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://api.alk.xx.kg/api/v1/health || echo 000)"
+    if [ "$GATEWAY_CODE" = "200" ] && [ "$ALK_CODE" = "200" ]; then
+      ok "gateway:api-gateway" "gateway vẫn phục vụ api.alk.xx.kg/health (200) và route dài hơn /api/v1/* trỏ AlkCloud (200)"
+    else
+      fail "gateway:api-gateway" "gateway /health=$GATEWAY_CODE, AlkCloud /api/v1/health=$ALK_CODE — route có thể bị chen (cần xử lý NGAY)"
+    fi
   else
     ok "gateway:api-gateway" "gateway không khai báo api.alk.xx.kg — không xung đột route"
   fi

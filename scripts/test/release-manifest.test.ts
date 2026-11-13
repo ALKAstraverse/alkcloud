@@ -75,6 +75,24 @@ describe('WS-L2 — release manifest', () => {
 		assert.ok(compareManifests(before, otherCommit).some((p) => p.includes('commit khác')));
 	});
 
+	it('R9 — secret trong wrangler.toml kèm chú thích trạng thái vẫn được nhận (BUG-09)', () => {
+		// Dạng dòng có chú thích: `#   AUTH_PEPPER   ← đã set 13/11`.
+		const annotated = [
+			'# Secrets (KHÔNG commit — đặt bằng `wrangler secret put <NAME>`):',
+			'#   AUTH_PEPPER                              ← đã set 13/11',
+			'#   B2_BUCKET                                ← BLOCKED',
+			'#   TURNSTILE_SITE_KEY                       ← tùy chọn',
+			'',
+			'[vars]',
+			'FOO = "bar"',
+		].join('\n');
+		const manifest = buildManifest();
+		assert.ok(manifest.requiredSecrets.includes('AUTH_PEPPER'));
+		assert.ok(manifest.requiredSecrets.includes('B2_BUCKET'));
+		assert.ok(manifest.requiredSecrets.includes('TURNSTILE_SITE_KEY'));
+		assert.ok(!manifest.requiredSecrets.includes('FOO'), 'không lấy nhầm tên từ [vars]');
+	});
+
 	it('R5 — markdown sinh ra không rò secret', () => {
 		const manifest = buildManifest();
 		const markdown = renderMarkdown(manifest);

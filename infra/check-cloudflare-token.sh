@@ -38,9 +38,8 @@ if [ -z "$TOKEN" ] && [ -n "${CF_API_TOKEN_FILE:-}" ] && [ -r "${CF_API_TOKEN_FI
   TOKEN="$(grep -m1 -E '^CF_API_TOKEN=' "$CF_API_TOKEN_FILE" | cut -d= -f2- | tr -d '\r\n')"
   [ -z "$TOKEN" ] && TOKEN="$(tr -d '\r\n' < "$CF_API_TOKEN_FILE")"
 fi
-if [ -z "$TOKEN" ] && [ -r /home/ubuntu/.cloudflare/token ]; then
-  TOKEN="$(grep -m1 '^CF_API_TOKEN=' /home/ubuntu/.cloudflare/token | cut -d= -f2- | tr -d '\r\n')"
-fi
+. "$(dirname "$0")/lib/cf-token.sh"
+TOKEN="$(alkcloud_load_cf_token)"
 if [ -z "$TOKEN" ]; then
   nc "token" "không tìm thấy CF_API_TOKEN (env, CF_API_TOKEN_FILE hoặc /home/ubuntu/.cloudflare/token)"
   printf '\nTổng kết: PASS=%s FAIL=%s NOT_CONFIGURED=%s PERMISSION_DENIED=%s SKIPPED=%s\n' \
@@ -51,17 +50,29 @@ fi
 ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-c3f46654371899594a8ddf59b863d211}"
 ZONE_ID="${CLOUDFLARE_ZONE_ID:-882ba5243fa3f704c450f821965fa950}"
 
+# Token cho TỪNG quyền: mỗi API token của owner chỉ có quyền tối thiểu ⇒
+# token analytics không đọc được DNS, token DNS không đọc được analytics.
+# Vì vậy mỗi check dùng token riêng theo nhãn (fallback về TOKEN hiện tại).
+TOKEN_ANALYTICS="${TOKEN}"
+TOKEN_DNS="${TOKEN}"
+if [ -z "${CF_API_TOKEN:-}" ] && [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+  [ -n "$(alkcloud_load_cf_token_by_label "AlkCloud-Baseline-ReadOnly")" ] && \
+    TOKEN_ANALYTICS="$(alkcloud_load_cf_token_by_label "AlkCloud-Baseline-ReadOnly")"
+  [ -n "$(alkcloud_load_cf_token_by_label "Edit Zone DNS")" ] && \
+    TOKEN_DNS="$(alkcloud_load_cf_token_by_label "Edit Zone DNS")"
+fi
+
 # curl đọc token từ stdin config ⇒ token KHÔNG nằm trong argv (không lộ qua `ps`).
 cf_get() {
-  local path="$1"
-  curl -s --max-time 20 -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+  local path="$1" token="${2:-$TOKEN}"
+  curl -s --max-time 20 -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
     "https://api.cloudflare.com/client/v4${path}"
 }
 
 check_json() {
-  # check_json <label> <path> <expect: true|false>
+  # check_json <label> <path> <expect: true|false> [token]
   local label="$1" path="$2" expect="$3" body
-  body="$(cf_get "$path")"
+  body="$(cf_get "$path" "${4:-$TOKEN}")"
   local success
   success="$(printf '%s' "$body" | python3 -c 'import json,sys
 try:
@@ -94,9 +105,14 @@ except Exception:
 printf '== Cloudflare API token (read-only kiểm tra quyền) ==\n'
 check_json "zone:read (zones/${ZONE_ID})" "/zones/${ZONE_ID}" true
 # Account Analytics chỉ đọc được qua GraphQL (POST nhưng câu query thuần đọc).
-GRAPHQL_BODY='{"query":"query($a: string!) { viewer { accounts(filter: {accountTag: $a}) { workersInvocationsAdaptive(limit: 1, filter: {datetime_geq: \"2026-01-01T00:00:00.000Z\", datetime_leq: \"2026-12-31T23:59:59.999Z\"}) { sum { requests } } } } }","variables":{"a":"'"${ACCOUNT_ID}"'"}}'
+# Cửa sổ thời gian PHẢI ≤ 4 tuần (4w4d): API Cloudflare từ chối range dài hơn
+# ⇒ check trước đây dùng range cả năm và luôn báo PERMISSION_DENIED dù token
+# có Account Analytics:Read (sai lệch phát hiện). Dùng 28 ngày gần nhất.
+GRAPHQL_FROM="$(date -u -d '28 days ago' '+%Y-%m-%dT%H:%M:%S.000Z')"
+GRAPHQL_TO="$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')"
+GRAPHQL_BODY='{"query":"query($a: string!) { viewer { accounts(filter: {accountTag: $a}) { workersInvocationsAdaptive(limit: 1, filter: {datetime_geq: \"'"${GRAPHQL_FROM}"'\", datetime_leq: \"'"${GRAPHQL_TO}"'\"}) { sum { requests } } } } }","variables":{"a":"'"${ACCOUNT_ID}"'"}}'
 GRAPHQL_RESP="$(curl -s --max-time 25 -X POST 'https://api.cloudflare.com/client/v4/graphql' \
-  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' --data "$GRAPHQL_BODY")"
+  -H "Authorization: Bearer ${TOKEN_ANALYTICS}" -H 'Content-Type: application/json' --data "$GRAPHQL_BODY")"
 GERR="$(printf '%s' "$GRAPHQL_RESP" | python3 -c 'import json,sys
 try:
     d=json.load(sys.stdin); print("; ".join(e.get("message","") for e in (d.get("errors") or []))[:160])
@@ -113,7 +129,7 @@ else
   denied "account:analytics:read (GraphQL workersInvocationsAdaptive)" "bị từ chối: ${GERR:-không rõ lý do} — cần token có Account Analytics:Read"
 fi
 check_json "workers:scripts:read (không bắt buộc)" "/accounts/${ACCOUNT_ID}/workers/scripts" false
-check_json "dns:read (dns_records)" "/zones/${ZONE_ID}/dns_records?per_page=1" true
+check_json "dns:read (dns_records)" "/zones/${ZONE_ID}/dns_records?per_page=1" true "$TOKEN_DNS"
 
 # Token verification endpoint (xác nhận token còn hợp lệ + quyền hiện tại)
 VERIFY="$(cf_get "/user/tokens/verify")"

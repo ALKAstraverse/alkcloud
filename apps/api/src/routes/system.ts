@@ -116,7 +116,9 @@ export function createSystemRoutes(context: AppContext): Hono<AppEnv> {
 			},
 			analytics: {
 				configured: Boolean(context.config.cloudflareAnalyticsToken),
-				note: 'Chưa có token ⇒ chế độ degradation giữ nguyên (fail-safe).',
+				note: context.config.cloudflareAnalyticsToken
+					? 'Đã có token analytics — số liệu quota lấy từ Cloudflare API.'
+					: 'Chưa có token ⇒ chế độ degradation giữ nguyên (fail-safe).',
 			},
 		});
 	});

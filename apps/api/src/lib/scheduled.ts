@@ -11,6 +11,12 @@ import {
 } from '@alkcloud/core';
 /** Thời gian giữ audit log (ngày). `audit_chain` được giữ vĩnh viễn. */
 export const AUDIT_RETENTION_DAYS = 180;
+/**
+ * Tên script Worker của AlkCloud — dùng để lọc số request của RIÊNG app
+ * trong Cloudflare analytics (BUG-12: lọc client-side không hoạt động vì
+ * Worker chạy qua route bị gom vào nhóm `__unknown__`).
+ */
+export const WORKER_SCRIPT_NAME = 'alkcloud-api';
 
 import { sweepAllLimiters } from '@alkcloud/auth';
 import type { Env, ResolvedConfig } from '../env.js';
@@ -261,9 +267,20 @@ async function collectQuotaSnapshot(
 				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify({
-				query: `query($a: string!, $s: string!, $e: string!) {
+				// BUG-12 (13/11/2026, Phase 5 production): truy vấn "tất cả script"
+				// KHÔNG trả dòng `alkcloud-api` — request của Worker chạy qua route
+				// bị gom vào nhóm `__unknown__` ⇒ lọc client-side theo scriptName
+				// luôn ra 0 ⇒ `alkApiCallsUsed` mãi bằng 0 ⇒ cảnh báo ngân sách
+				// API của riêng AlkCloud KHÔNG BAO GIỜ kích hoạt.
+				// Nay lấy 2 tập: `all` (toàn account) + `alk` (lọc server-side
+				// theo scriptName) trong MỘT request ⇒ vẫn 1 lần gọi API.
+				query: `query($a: string!, $s: string!, $e: string!, $n: string!) {
 					viewer { accounts(filter: {accountTag: $a}) {
-						workersInvocationsAdaptive(limit: 10000, filter: {datetime_geq: $s, datetime_leq: $e}) {
+						all: workersInvocationsAdaptive(limit: 10000, filter: {datetime_geq: $s, datetime_leq: $e}) {
+							sum { requests }
+							dimensions { date scriptName }
+						}
+						alk: workersInvocationsAdaptive(limit: 10000, filter: {datetime_geq: $s, datetime_leq: $e, scriptName: $n}) {
 							sum { requests }
 							dimensions { date scriptName }
 						}
@@ -273,6 +290,7 @@ async function collectQuotaSnapshot(
 					a: accountId,
 					s: `${day}T00:00:00.000Z`,
 					e: `${day}T23:59:59.999Z`,
+					n: WORKER_SCRIPT_NAME,
 				},
 			}),
 		});
@@ -281,7 +299,8 @@ async function collectQuotaSnapshot(
 			data?: {
 				viewer?: {
 					accounts?: Array<{
-						workersInvocationsAdaptive?: Array<{ sum?: { requests?: number }; dimensions?: { scriptName?: string } }>;
+						all?: Array<{ sum?: { requests?: number }; dimensions?: { scriptName?: string } }>;
+						alk?: Array<{ sum?: { requests?: number }; dimensions?: { scriptName?: string } }>;
 					}>;
 				};
 			};
@@ -295,13 +314,16 @@ async function collectQuotaSnapshot(
 		if (payload.errors && payload.errors.length > 0) {
 			throw new Error('analytics GraphQL trả lỗi');
 		}
-		const rows = payload.data?.viewer?.accounts?.[0]?.workersInvocationsAdaptive ?? [];
+		const account = payload.data?.viewer?.accounts?.[0];
+		const allRows = account?.all ?? [];
+		const alkRows = account?.alk ?? [];
 		let accountUsed = 0;
+		for (const row of allRows) {
+			accountUsed += Number(row.sum?.requests ?? 0);
+		}
 		let alkUsed = 0;
-		for (const row of rows) {
-			const requests = Number(row.sum?.requests ?? 0);
-			accountUsed += requests;
-			if ((row.dimensions?.scriptName ?? '').startsWith('alkcloud-api')) alkUsed += requests;
+		for (const row of alkRows) {
+			alkUsed += Number(row.sum?.requests ?? 0);
 		}
 		return {
 			accountRequestsUsed: accountUsed,

@@ -63,13 +63,17 @@ run "secret scan"         ./infra/check-secrets.sh
 run "benchmark (WS-G)"    npm run --silent bench
 run "cost model (WS-H)"   npm run --silent cost
 run "quota audit"         npm run --silent audit:quota
-run "restore drill (local)" npm run --silent restore:drill
 run "release manifest (WS-L2)" npm run --silent release:manifest
 BACKUP_FILE="$(ls -t backups/alkcloud-d1-*.sql 2>/dev/null | head -1 || true)"
 if [ -n "$BACKUP_FILE" ]; then
   run "backup verify (local)" npm run --silent verify:backup -- "$BACKUP_FILE"
+  # Drill restore từ CHÍNH file backup đó (có dữ liệu) — mục đích thật của
+  # drill: chứng minh "restore được từ file backup", không phải "D1 local có
+  # dữ liệu" (D1 local trên máy CI/owner thường rỗng ⇒ drill fail giả).
+  run "restore drill (từ file backup)" npm run --silent restore:drill -- --file "$BACKUP_FILE"
 else
   mark_skip "backup verify — chưa có file backup trong backups/"
+  run "restore drill (local)" npm run --silent restore:drill
 fi
 
 # ---------------------------------------------------------------- 2. Tích hợp
@@ -132,7 +136,20 @@ fi
 
 # ---------------------------------------------------------------- 4. E2E
 banner "4. E2E production"
-if [[ -n "${ALKCLOUD_E2E_API_URL:-}" && -n "${ALKCLOUD_E2E_AUTH_KEY:-}" ]]; then
+# Ưu tiên wrapper `run-e2e-production.ts` (tự tính authKey từ credential owner
+# trong deploy/production-secrets.env, KHÔNG in giá trị) — không cần export
+# ALKCLOUD_E2E_AUTH_KEY ra ngoài. Fallback về biến môi trường nếu owner dùng
+# cách cũ.
+if [[ -f deploy/production-secrets.env ]]; then
+  if node --import tsx scripts/run-e2e-production.ts >"$LOG_DIR/e2e.log" 2>&1; then
+    mark_pass "E2E production"
+  else
+    # E2E có bước BLOCKED khi B2 chưa cấu hình ⇒ không coi là FAIL sản phẩm,
+    # nhưng vẫn KHÔNG tính là PASS.
+    mark_blocked "E2E production — có bước FAIL/BLOCKED (xem log)"
+    grep -E "^(FAIL|BLOCKED)" "$LOG_DIR/e2e.log" | sed -n '1,12p' | sed 's/^/      /'
+  fi
+elif [[ -n "${ALKCLOUD_E2E_API_URL:-}" && -n "${ALKCLOUD_E2E_AUTH_KEY:-}" ]]; then
   if npm run --silent test:e2e >"$LOG_DIR/e2e.log" 2>&1; then
     mark_pass "E2E production"
   else
@@ -140,7 +157,7 @@ if [[ -n "${ALKCLOUD_E2E_API_URL:-}" && -n "${ALKCLOUD_E2E_AUTH_KEY:-}" ]]; then
     sed -n '1,20p' "$LOG_DIR/e2e.log" | sed 's/^/      /'
   fi
 else
-  mark_skip "E2E production — thiếu ALKCLOUD_E2E_API_URL / ALKCLOUD_E2E_AUTH_KEY"
+  mark_skip "E2E production — thiếu deploy/production-secrets.env hoặc ALKCLOUD_E2E_API_URL / ALKCLOUD_E2E_AUTH_KEY"
 fi
 
 # ---------------------------------------------------------------- Tổng kết
