@@ -464,7 +464,8 @@ export class Database {
 		if (folderIds.length === 0) return 0;
 		const placeholders = folderIds.map(() => '?').join(', ');
 		const result = await this.driver.run(
-			`UPDATE files SET deleted_at = ?, deleted_batch_id = ?, purge_after = ?, updated_at = ?, version = version + 1
+			`UPDATE files SET deleted_at = ?, deleted_batch_id = ?, purge_after = ?,
+				purge_state = 'NONE', purge_marked_at = NULL, updated_at = ?, version = version + 1
 			 WHERE folder_id IN (${placeholders}) AND deleted_at IS NULL`,
 			[now, batchId, purgeAfter, now, ...folderIds],
 		);
@@ -488,7 +489,8 @@ export class Database {
 			params.push(...folderIds);
 		}
 		const result = await this.driver.run(
-			`UPDATE files SET deleted_at = NULL, deleted_batch_id = NULL, purge_after = NULL, updated_at = ?, version = version + 1
+			`UPDATE files SET deleted_at = NULL, deleted_batch_id = NULL, purge_after = NULL,
+				purge_state = 'NONE', purge_marked_at = NULL, updated_at = ?, version = version + 1
 			 WHERE deleted_batch_id = ?${folderFilter}`,
 			params,
 		);
