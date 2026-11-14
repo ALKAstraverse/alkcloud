@@ -2,6 +2,12 @@ import { useEffect, useState } from 'react';
 import { ApiError, API_BASE } from '../lib/api.js';
 import { deriveShareVerifier } from '../lib/kdf.js';
 import { downloadToFile } from '../lib/download.js';
+import { Button } from '../components/Button.js';
+import { Icon } from '../components/Icon.js';
+import { InlineNotice } from '../components/States.js';
+import { formatBytes, formatDate } from '../lib/format.js';
+import { useTheme } from '../lib/theme.js';
+import { fileKind } from '../lib/file-type.js';
 
 interface SharePageProps {
 	token: string;
@@ -31,27 +37,16 @@ async function shareRequest<T>(path: string, token: string, init: RequestInit = 
 		},
 	});
 	if (!response.ok) {
-			const body = (await response.json().catch(() => ({}))) as {
-				error?: { message?: string };
-			};
-			throw new ApiError(response.status, 'share_error', body.error?.message ?? `HTTP ${response.status}`);
+		const body = (await response.json().catch(() => ({}))) as {
+			error?: { message?: string };
+		};
+		throw new ApiError(response.status, 'share_error', body.error?.message ?? `HTTP ${response.status}`);
 	}
 	return (await response.json()) as T;
 }
 
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	const units = ['KB', 'MB', 'GB', 'TB'];
-	let value = bytes / 1024;
-	let unit = 0;
-	while (value >= 1024 && unit < units.length - 1) {
-		value /= 1024;
-		unit += 1;
-	}
-	return `${value.toFixed(1)} ${units[unit]}`;
-}
-
 export function SharePage({ token }: SharePageProps) {
+	useTheme();
 	const [info, setInfo] = useState<ShareInfo | null>(null);
 	const [password, setPassword] = useState('');
 	const [unlocked, setUnlocked] = useState(false);
@@ -60,10 +55,12 @@ export function SharePage({ token }: SharePageProps) {
 	const [grant, setGrant] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [unlocking, setUnlocking] = useState(false);
+	const [downloading, setDownloading] = useState(false);
 
 	useEffect(() => {
 		if (!token) {
-			setError('Thiếu token chia sẻ');
+			setError('Thiếu token chia sẻ — đường dẫn có thể bị cắt khi sao chép.');
 			setLoading(false);
 			return;
 		}
@@ -91,6 +88,7 @@ export function SharePage({ token }: SharePageProps) {
 	const unlock = async (event: React.FormEvent) => {
 		event.preventDefault();
 		setError(null);
+		setUnlocking(true);
 		try {
 			const verifier = await deriveShareVerifier(password);
 			const result = await shareRequest<{ share: ShareInfo; grant: string }>('/public/share/unlock', token, {
@@ -106,11 +104,14 @@ export function SharePage({ token }: SharePageProps) {
 			setUnlocked(true);
 		} catch (caught) {
 			setError(caught instanceof ApiError ? caught.message : 'Mật khẩu không đúng');
+		} finally {
+			setUnlocking(false);
 		}
 	};
 
 	const download = async () => {
 		setError(null);
+		setDownloading(true);
 		try {
 			const response = await fetch(`${API_BASE}/public/share/download`, {
 				headers: { 'x-share-token': token, ...(grant ? { 'x-share-grant': grant } : {}) },
@@ -126,59 +127,130 @@ export function SharePage({ token }: SharePageProps) {
 			if (refreshed) setInfo(refreshed.share);
 		} catch (caught) {
 			setError(caught instanceof ApiError ? caught.message : 'Tải thất bại');
+		} finally {
+			setDownloading(false);
 		}
 	};
 
-	if (loading) {
-		return (
-			<main className="center">
-				<p>Đang tải…</p>
-			</main>
-		);
-	}
+	const kind = info?.fileName ? fileKind(info.fileName, info.contentType) : null;
 
 	return (
-		<main className="center">
-			<section className="card">
-				<h1>Chia sẻ tệp</h1>
-				{info ? (
-					<>
-						<p>
-							<strong>{info.fileName ?? 'Tệp được bảo vệ'}</strong>
+		<div className="share">
+			<header className="share__header">
+				<div className="brand" style={{ padding: 0 }}>
+					<span className="brand__mark">
+						<Icon name="cloud" />
+					</span>
+					<span>
+						<span className="brand__name">AlkCloud</span>
+						<span className="brand__tagline" style={{ display: 'block' }}>
+							Chia sẻ tệp
+						</span>
+					</span>
+				</div>
+			</header>
+
+			<main className="share__main">
+				{loading ? (
+					<section className="share__card" aria-busy="true">
+						<span className="share__icon">
+							<Icon name="cloud" />
+						</span>
+						<div className="share__title">Đang mở liên kết…</div>
+						<p className="share__note">Đang kiểm tra hiệu lực của liên kết chia sẻ.</p>
+					</section>
+				) : !info ? (
+					<section className="share__card" role="alert">
+						<span className="share__icon" style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}>
+							<Icon name="circleXmark" />
+						</span>
+						<h1 className="share__title">Không mở được liên kết</h1>
+						<p className="share__note">
+							{error ?? 'Liên kết không tồn tại, đã hết hạn hoặc đã bị thu hồi.'} Hãy liên hệ người gửi để xin
+							liên kết mới.
 						</p>
-						<p className="muted small">
-							{info.size !== null ? formatBytes(info.size) : '—'} · hết hạn {info.expiresAt.slice(0, 10)}
-							{info.downloadsRemaining !== null ? ` · còn ${info.downloadsRemaining} lượt tải` : ''}
-						</p>
-					</>
+					</section>
 				) : (
-					<p className="muted">Thông tin không khả dụng.</p>
-				)}
+					<section className="share__card">
+						<span className="share__icon">
+							<Icon name={kind?.icon ?? 'lock'} />
+						</span>
+						<div>
+							<h1 className="share__title">{info.fileName ?? 'Tệp được bảo vệ'}</h1>
+							<p className="share__meta" style={{ marginTop: 'var(--space-4)' }}>
+								<span className="share__meta-item">
+									<Icon name="hardDrive" />
+									{info.size !== null ? formatBytes(info.size) : 'Chưa mở khoá'}
+								</span>
+								<span className="share__meta-item">
+									<Icon name="clock" /> Hết hạn {formatDate(info.expiresAt)}
+								</span>
+								{info.downloadsRemaining !== null ? (
+									<span className="share__meta-item">
+										<Icon name="download" /> Còn {info.downloadsRemaining} lượt tải
+									</span>
+								) : null}
+								{info.requiresPassword ? (
+									<span className="share__meta-item">
+										<Icon name="lock" /> Có mật khẩu
+									</span>
+								) : null}
+							</p>
+						</div>
 
-				{info?.requiresPassword && !unlocked && (
-					<form onSubmit={unlock}>
-						<label>
-							Mật khẩu
-							<input
-								type="password"
-								value={password}
-								onChange={(event) => setPassword(event.target.value)}
-								required
-							/>
-						</label>
-						<button type="submit">Mở khoá</button>
-					</form>
-				)}
+						{info.requiresPassword && !unlocked ? (
+							<form className="share__form" onSubmit={unlock}>
+								<div className="field">
+									<label className="field__label" htmlFor="share-password">
+										Mật khẩu chia sẻ
+									</label>
+									<input
+										id="share-password"
+										className="input"
+										type="password"
+										value={password}
+										onChange={(event) => setPassword(event.target.value)}
+										required
+										autoFocus
+										autoComplete="off"
+										placeholder="Nhập mật khẩu người gửi đã đưa"
+									/>
+									<span className="field__hint">
+										Mật khẩu được băm ngay trong trình duyệt — AlkCloud không nhận mật khẩu gốc.
+									</span>
+								</div>
+								<Button variant="primary" type="submit" size="lg" block loading={unlocking} icon="lock">
+									Mở khoá và xem tệp
+								</Button>
+							</form>
+						) : null}
 
-				{unlocked && (
-					<button type="button" onClick={() => void download()}>
-						Tải xuống
-					</button>
-				)}
+						{unlocked ? (
+							<Button
+								variant="primary"
+								size="lg"
+								block
+								icon="download"
+								loading={downloading}
+								onClick={() => void download()}
+							>
+								Tải xuống{info.size !== null ? ` · ${formatBytes(info.size)}` : ''}
+							</Button>
+						) : null}
 
-				{error && <p className="error">{error}</p>}
-				<p className="muted small">Chia sẻ tải xuống — không có xem trước.</p>
-			</section>
-		</main>
+						{error && info ? (
+							<InlineNotice tone="danger" title="Không thực hiện được">
+								{error}
+							</InlineNotice>
+						) : null}
+
+						<p className="share__note">
+							Liên kết chỉ để tải xuống — không xem trước, không chỉnh sửa. Người gửi có thể thu hồi bất kỳ lúc
+							nào.
+						</p>
+					</section>
+				)}
+			</main>
+		</div>
 	);
 }

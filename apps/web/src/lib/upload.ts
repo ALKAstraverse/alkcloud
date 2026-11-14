@@ -14,8 +14,21 @@ export interface UploadProgress {
 	partsTotal: number;
 }
 
+export interface UploadFileResult {
+	name: string;
+	size: number;
+	status: 'success' | 'error';
+	error?: string;
+}
+
 export interface UploadOptions {
 	onProgress?: (progress: UploadProgress) => void;
+	/** Bắt đầu upload một file (dùng cho hàng đợi upload trong UI). */
+	onFileStart?: (file: File) => void;
+	/** Tiến độ riêng của từng file. */
+	onFileProgress?: (file: File, progress: UploadProgress) => void;
+	/** Kết quả của từng file (thành công / thất bại). */
+	onFileDone?: (file: File, result: UploadFileResult) => void;
 	signal?: AbortSignal;
 	/** Thư mục đích — null = root. */
 	folderId?: string | null;
@@ -54,6 +67,7 @@ async function putPart(
 			part ? { partNumber: part.partNumber, uploadId: part.uploadId } : {},
 			blob,
 			headers ?? {},
+			signal,
 		);
 	} catch (error) {
 		firstError = error;
@@ -171,22 +185,40 @@ export async function uploadFile(
 	}
 }
 
-/** Upload nhiều file tuần tự (giảm tải băng thông và giữ quota an toàn). */
+/**
+ * Upload nhiều file tuần tự (giảm tải băng thông và giữ quota an toàn).
+ *
+ * Vẫn giữ nguyên hợp đồng cũ (`uploaded` / `failed` / `errors`) và bổ sung
+ * `results` + callback theo từng file cho hàng đợi upload trong UI.
+ */
 export async function uploadFiles(
 	files: File[],
 	options: UploadOptions = {},
-): Promise<{ uploaded: number; failed: number; errors: string[] }> {
+): Promise<{ uploaded: number; failed: number; errors: string[]; results: UploadFileResult[] }> {
 	let uploaded = 0;
 	let failed = 0;
 	const errors: string[] = [];
+	const results: UploadFileResult[] = [];
 	for (const file of files) {
+		options.onFileStart?.(file);
 		try {
-			await uploadFile(file, options);
+			await uploadFile(file, {
+				...options,
+				onProgress: (progress) => {
+					options.onProgress?.(progress);
+					options.onFileProgress?.(file, progress);
+				},
+			});
 			uploaded += 1;
+			results.push({ name: file.name, size: file.size, status: 'success' });
+			options.onFileDone?.(file, { name: file.name, size: file.size, status: 'success' });
 		} catch (error) {
 			failed += 1;
-			errors.push(`${file.name}: ${error instanceof Error ? error.message : 'lỗi không xác định'}`);
+			const message = error instanceof Error ? error.message : 'lỗi không xác định';
+			errors.push(`${file.name}: ${message}`);
+			results.push({ name: file.name, size: file.size, status: 'error', error: message });
+			options.onFileDone?.(file, { name: file.name, size: file.size, status: 'error', error: message });
 		}
 	}
-	return { uploaded, failed, errors };
+	return { uploaded, failed, errors, results };
 }

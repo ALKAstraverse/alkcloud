@@ -1,28 +1,41 @@
 import { useEffect, useState } from 'react';
 import { getAuthStatus, getSession, setCsrfToken } from './lib/api.js';
 import { LoginPage } from './pages/LoginPage.js';
-import { FilesPage } from './pages/FilesPage.js';
+import { FilesPage, type WorkspaceView } from './pages/FilesPage.js';
 import { SharePage } from './pages/SharePage.js';
+import { ToastProvider } from './components/Toast.js';
+import { Icon } from './components/Icon.js';
 
 export type Route =
 	| { kind: 'login' }
-	| { kind: 'files' }
+	| { kind: 'files'; view: WorkspaceView }
 	| { kind: 'share'; token: string };
 
+const VIEWS: WorkspaceView[] = ['files', 'trash', 'settings'];
+
 export function parseRoute(): Route {
-	const path = window.location.pathname;
+	const path = window.location.pathname.replace(/\/+$/, '') || '/';
 	// Share token nằm trong fragment: `#<token>` — không bao giờ gửi lên server.
 	if (path === '/s' || path.startsWith('/s/')) {
 		const token = window.location.hash.replace(/^#/, '').trim();
 		return { kind: 'share', token };
 	}
-	return { kind: 'login' };
+	if (path === '/trash') return { kind: 'files', view: 'trash' };
+	if (path === '/settings') return { kind: 'files', view: 'settings' };
+	return { kind: 'files', view: 'files' };
+}
+
+function pathForView(view: WorkspaceView): string {
+	if (view === 'trash') return '/trash';
+	if (view === 'settings') return '/settings';
+	return '/';
 }
 
 export function App() {
 	const [route, setRoute] = useState<Route>(() => parseRoute());
 	const [bootstrapped, setBootstrapped] = useState<boolean | null>(null);
 	const [authenticated, setAuthenticated] = useState(false);
+	const [ownerEmail, setOwnerEmail] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [statusError, setStatusError] = useState<string | null>(null);
 
@@ -35,7 +48,9 @@ export function App() {
 	// Worker redirect `/` → `/app/<version>/` (để né cache edge cũ) ⇒ dọn URL cho gọn.
 	useEffect(() => {
 		if (window.location.pathname.startsWith('/app/')) {
-			window.history.replaceState(null, '', '/');
+			const normalized = parseRoute();
+			const target = normalized.kind === 'files' ? pathForView(normalized.view) : '/';
+			window.history.replaceState(null, '', target);
 		}
 	}, []);
 
@@ -50,7 +65,10 @@ export function App() {
 					try {
 						const session = await getSession();
 						setCsrfToken(session.session.csrfToken);
-						if (!cancelled) setAuthenticated(true);
+						if (!cancelled) {
+							setAuthenticated(true);
+							setOwnerEmail(session.owner?.email ?? null);
+						}
 					} catch {
 						if (!cancelled) setAuthenticated(false);
 					}
@@ -69,25 +87,41 @@ export function App() {
 		};
 	}, []);
 
-	if (loading) {
+	const navigate = (view: WorkspaceView) => {
+		setRoute({ kind: 'files', view });
+		window.history.pushState(null, '', pathForView(view));
+	};
+
+	if (route.kind === 'share') {
 		return (
-			<main className="center">
-				<p>Đang tải…</p>
-			</main>
+			<ToastProvider>
+				<SharePage token={route.token} />
+			</ToastProvider>
 		);
 	}
 
-	if (route.kind === 'share') {
-		return <SharePage token={route.token} />;
+	if (loading) {
+		return (
+			<div className="boot" role="status" aria-live="polite">
+				<span className="brand__mark">
+					<Icon name="cloud" />
+				</span>
+				<span className="spinner" aria-hidden="true" />
+				<span className="small muted">Đang kết nối AlkCloud…</span>
+			</div>
+		);
 	}
 
 	if (statusError) {
 		return (
-			<main className="center">
-				<p className="error" role="alert">
+			<main className="boot" role="alert">
+				<span className="brand__mark">
+					<Icon name="cloud" />
+				</span>
+				<p className="small" style={{ color: 'var(--danger)', maxWidth: '44ch', textAlign: 'center' }}>
 					{statusError}
 				</p>
-				<button type="button" onClick={() => window.location.reload()}>
+				<button type="button" className="btn btn--primary" onClick={() => window.location.reload()}>
 					Tải lại
 				</button>
 			</main>
@@ -96,15 +130,31 @@ export function App() {
 
 	if (!authenticated) {
 		return (
-			<LoginPage
-				bootstrapped={Boolean(bootstrapped)}
-				onAuthenticated={() => {
-					setAuthenticated(true);
-					setRoute({ kind: 'files' });
-				}}
-			/>
+			<ToastProvider>
+				<LoginPage
+					bootstrapped={Boolean(bootstrapped)}
+					onAuthenticated={() => {
+						setAuthenticated(true);
+						navigate('files');
+					}}
+				/>
+			</ToastProvider>
 		);
 	}
 
-	return <FilesPage onLogout={() => setAuthenticated(false)} />;
+	return (
+		<ToastProvider>
+			<FilesPage
+				view={route.kind === 'files' ? route.view : 'files'}
+				onNavigate={navigate}
+				ownerEmail={ownerEmail}
+				onLogout={() => {
+					setAuthenticated(false);
+					setOwnerEmail(null);
+					setRoute({ kind: 'login' });
+					window.history.replaceState(null, '', '/');
+				}}
+			/>
+		</ToastProvider>
+	);
 }

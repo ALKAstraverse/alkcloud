@@ -266,6 +266,10 @@ export async function listSessions(): Promise<{
 	return apiRequest('/auth/sessions');
 }
 
+export async function regenerateRecoveryCodes(): Promise<{ recoveryCodes: string[] }> {
+	return apiRequest('/auth/recovery-codes/regenerate', { method: 'POST', body: {} });
+}
+
 export async function revokeSession(id: string): Promise<void> {
 	await apiRequest(`/auth/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
@@ -292,6 +296,10 @@ export async function listFolders(parentId?: string | null): Promise<{ folders: 
 
 export async function createFolder(name: string, parentId: string | null): Promise<{ folder: FolderEntry }> {
 	return apiRequest('/folders', { method: 'POST', body: { name, parentId } });
+}
+
+export async function moveFolder(id: string, parentId: string | null): Promise<void> {
+	await apiRequest(`/folders/${encodeURIComponent(id)}/move`, { method: 'POST', body: { parentId } });
 }
 
 export async function renameFolder(id: string, name: string): Promise<void> {
@@ -385,6 +393,7 @@ export async function uploadContent(
 	params: { partNumber?: number; uploadId?: string },
 	body: Blob,
 	headers: Record<string, string> = {},
+	signal?: AbortSignal,
 ): Promise<Response> {
 	const query = new URLSearchParams();
 	if (params.partNumber !== undefined) query.set('partNumber', String(params.partNumber));
@@ -401,6 +410,7 @@ export async function uploadContent(
 		},
 		body,
 		credentials: 'include',
+		signal,
 	});
 }
 
