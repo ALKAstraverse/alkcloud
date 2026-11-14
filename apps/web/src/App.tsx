@@ -32,6 +32,13 @@ export function App() {
 		return () => window.removeEventListener('popstate', onPopState);
 	}, []);
 
+	// Worker redirect `/` → `/app/<version>/` (để né cache edge cũ) ⇒ dọn URL cho gọn.
+	useEffect(() => {
+		if (window.location.pathname.startsWith('/app/')) {
+			window.history.replaceState(null, '', '/');
+		}
+	}, []);
+
 	useEffect(() => {
 		let cancelled = false;
 		void (async () => {

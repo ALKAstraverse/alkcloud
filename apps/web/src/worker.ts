@@ -3,11 +3,19 @@
  *
  * Mục đích: phục vụ SPA + áp dụng security headers.
  *
- * GHI CHÚ VỀ CSP: CSP thực thi trong production do **edge** của Cloudflare đặt
- * (Transform Rule) và ghi đè header của Worker này ⇒ Worker KHÔNG kiểm soát
- * được CSP cuối cùng. Vì vậy web app không được phụ thuộc vào việc CSP có cho
- * phép host nào ngoài `self` và `api.alk.xx.kg`:
- *   - Upload đi qua API (`PUT /api/v1/uploads/:id/content`) rồi API chuyển tiếp
+ * GHI CHÚ VỀ CSP: CSP do Worker này đặt và **có hiệu lực** (đã kiểm chứng: URL chưa
+ * từng bị cache trả đúng CSP của app). Nhưng **cache edge của zone** phục vụ lại
+ * response cũ (HTML + header) kể cả khi client gửi `Cache-Control: no-cache` ⇒
+ * sau mỗi lần deploy, người dùng có thể vẫn chạy bundle cũ (và CSP cũ).
+ *
+ * ⇒ Vì vậy `/` **redirect** tới `/app/<version>/` (version = hash bundle hiện tại):
+ *   - mỗi lần deploy là một path mới ⇒ cache key mới ⇒ luôn lấy bản mới;
+ *   - kể cả khi response 307 bị cache (Location cũ), path đó vẫn phục vụ SPA của
+ *     deployment **hiện tại** ⇒ người dùng luôn chạy code mới nhất.
+ *
+ * Web app không được phụ thuộc vào việc CSP có cho phép host nào ngoài `self` và
+ * `api.alk.xx.kg`:
+ *   - Upload đi qua API (`POST /api/v1/uploads/:id/content`) rồi API chuyển tiếp
  *     tới B2 qua relay ⇒ không cần `connect-src` tới host B2.
  *   - Download dùng `location.assign` (navigation) ⇒ không bị `connect-src` chặn.
  */
@@ -16,6 +24,23 @@ interface Env {
 	ASSETS: {
 		fetch(request: Request): Promise<Response>;
 	};
+}
+
+/**
+ * Version của deployment hiện tại = hash trong tên bundle (`index-<hash>.js`).
+ * Cache theo isolate: chỉ đọc `index.html` **một lần** cho mỗi isolate.
+ */
+let versionPromise: Promise<string> | null = null;
+
+function getVersion(env: Env): Promise<string> {
+	versionPromise ??= env.ASSETS.fetch(new Request('https://assets.local/index.html'))
+		.then((response) => (response.ok ? response.text() : ''))
+		.then((html) => {
+			const match = html.match(/\/assets\/index-([A-Za-z0-9_-]+)\.js/);
+			return match?.[1] ?? 'dev';
+		})
+		.catch(() => 'dev');
+	return versionPromise;
 }
 
 const SECURITY_HEADERS: Record<string, string> = {
@@ -48,6 +73,25 @@ const SECURITY_HEADERS: Record<string, string> = {
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
+		// Entry point → path có version ⇒ không dính cache/rule cũ ở edge
+		// (xem header file). Edge có thể rewrite `/` thành `/index.html` trước khi
+		// Worker chạy ⇒ kiểm tra cả hai.
+		if (
+			(url.pathname === '/' || url.pathname === '/index.html') &&
+			(request.method === 'GET' || request.method === 'HEAD')
+		) {
+			const version = await getVersion(env);
+			return new Response(null, {
+				status: 307,
+				headers: {
+					location: `/app/${version}/`,
+					'cache-control': 'no-store',
+					'cdn-cache-control': 'no-store',
+					'x-content-type-options': 'nosniff',
+					'x-robots-tag': 'noindex, nofollow',
+				},
+			});
+		}
 		// `/api/*` KHÔNG thuộc web SPA. Nếu để SPA fallback phục vụ, client nhận
 		// HTML 200 thay vì JSON ⇒ `response.json()` ném lỗi và mọi thao tác đăng
 		// nhập/liệt kê file chết trong im lặng. Trả 404 JSON rõ ràng thay vì đoán.
