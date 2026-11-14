@@ -25,7 +25,7 @@ import {
 	type FolderEntry,
 } from '../lib/api.js';
 import { deriveShareVerifier, randomSalt } from '../lib/kdf.js';
-import { uploadFiles } from '../lib/upload.js';
+import { uploadFiles, uniqueFileName } from '../lib/upload.js';
 import { Button, IconButton } from '../components/Button.js';
 import { Icon } from '../components/Icon.js';
 import { Menu } from '../components/Menu.js';
@@ -75,6 +75,8 @@ type SortKey = 'name' | 'modified' | 'size';
 const PROXY_DOWNLOAD_LIMIT = 100 * 1024 * 1024;
 const LAYOUT_KEY = 'alkcloud.layout';
 const SORT_KEY = 'alkcloud.sort';
+/** Số file upload chạy song song — giống Nextcloud (tải tuần tự rất chậm khi nhiều file). */
+const MAX_PARALLEL_UPLOADS = 3;
 
 function readStored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
 	try {
@@ -134,7 +136,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 	const dragDepth = useRef(0);
 	const filesRef = useRef(new Map<string, File>());
 	const controllers = useRef(new Map<string, AbortController>());
-	const processing = useRef(false);
+	const processing = useRef(0);
 
 	// ------------------------------------------------------------------ data
 	const refresh = useCallback(
@@ -392,23 +394,38 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 	// ----------------------------------------------------------------- upload
 	const enqueue = useCallback((incoming: File[]) => {
 		if (incoming.length === 0) return;
+		// Server từ chối trùng tên (409) sau khi đã nhận dữ liệu ⇒ tự chọn tên
+		// không trùng ngay từ đầu, giống Nextcloud (`bug.txt` → `bug (1).txt`).
+		const taken = [...files.map((item) => item.name), ...queue.map((item) => item.name)];
+		const renamed: string[] = [];
 		const items: UploadQueueItem[] = incoming.map((file) => {
 			const id = `up_${Date.now().toString(36)}_${(uploadSeq += 1)}`;
 			filesRef.current.set(id, file);
-			return { id, name: file.name, size: file.size, uploadedBytes: 0, status: 'queued' };
+			const name = uniqueFileName(file.name, taken);
+			taken.push(name);
+			if (name !== file.name) renamed.push(name);
+			return { id, name, size: file.size, uploadedBytes: 0, status: 'queued' };
 		});
 		setQueue((current) => [...current, ...items]);
 		setQueueOpen(true);
-	}, []);
+		if (renamed.length > 0) {
+			toast.push({
+				tone: 'info',
+				title: 'Đã đổi tên để không trùng',
+				message: renamed.join(', '),
+			});
+		}
+	}, [files, queue, toast]);
 
-	// Xử lý tuần tự từng file trong hàng đợi.
+	// Xử lý hàng đợi: tối đa MAX_PARALLEL_UPLOADS file chạy song song
+	// (Nextcloud cũng tải song song — tải tuần tự khiến 10 file phải chờ 10×).
 	useEffect(() => {
-		if (processing.current) return;
-		const next = queue.find((item) => item.status === 'queued');
+		if (processing.current >= MAX_PARALLEL_UPLOADS) return;
+		const next = queue.find((item) => item.status === 'queued' && !controllers.current.has(item.id));
 		if (!next) return;
 		const file = filesRef.current.get(next.id);
 		if (!file) return;
-		processing.current = true;
+		processing.current += 1;
 		const controller = new AbortController();
 		controllers.current.set(next.id, controller);
 		setQueue((current) =>
@@ -418,6 +435,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 		);
 		void uploadFiles([file], {
 			folderId,
+			name: next.name,
 			signal: controller.signal,
 			onProgress: (progress) => {
 				setQueue((current) =>
@@ -454,7 +472,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 			})
 			.finally(() => {
 				controllers.current.delete(next.id);
-				processing.current = false;
+				processing.current -= 1;
 				// Kích hoạt vòng lặp cho file kế tiếp.
 				setQueue((current) => [...current]);
 			});

@@ -32,6 +32,8 @@ export interface UploadOptions {
 	signal?: AbortSignal;
 	/** Thư mục đích — null = root. */
 	folderId?: string | null;
+	/** Tên file dùng khi lưu — mặc định lấy `file.name`. Dùng để tự tránh trùng tên. */
+	name?: string;
 }
 
 const MAX_PARTS_PER_REQUEST = 20;
@@ -41,15 +43,19 @@ const CONCURRENCY = 3;
  * PUT một part.
  *
  * Hai đường, thử theo thứ tự:
- *   1. Qua API (`/uploads/:id/content`) — API chuyển tiếp tới B2 qua relay.
- *      Đường này không phụ thuộc CSP cho host B2 (chỉ cần `api.alk.xx.kg`).
- *   2. Nếu đường 1 lỗi mạng/5xx ⇒ thử PUT thẳng vào presigned URL của B2
- *      (nhanh hơn, không tốn Worker quota, nhưng chỉ chạy được khi CSP cho
- *      phép host B2).
+ *   1. **PUT thẳng vào presigned URL của B2** (1 hop: browser → B2).
+ *      Nhanh nhất, không tốn CPU/quota của Worker, không cần API làm trung gian.
+ *      Điều kiện: CSP `connect-src` phải cho phép host B2 (đang có:
+ *      `https://s3.ca-east-006.backblazeb2.com`) và bucket CORS phải cho
+ *      origin `https://cloud.alk.xx.kg` với method PUT + expose ETag (đã cấu hình).
+ *      Presigned URL vốn đã được trả cho browser trong response của
+ *      `POST /uploads` và `POST /uploads/:id/parts` ⇒ không phát sinh rủi ro mới.
+ *   2. Nếu đường 1 bị chặn (CSP/lỗi mạng) hoặc B2 trả lỗi ⇒ fallback qua API
+ *      (`POST /uploads/:id/content` → API → relay → B2). Đường này chỉ cần
+ *      `api.alk.xx.kg` nên vẫn chạy được khi edge CSP chặn host B2.
  *
- * Lý do có đường 2: CSP của Cloudflare edge có thể đang cho phép host B2
- * (sau khi owner sửa Transform Rule) hoặc không — client không nên phụ thuộc
- * vào một cấu hình duy nhất.
+ * Đo thật 14/11/2026 (50 MB, browser): proxy 14,5 s cho phần dữ liệu vs direct
+ * 6,8 s ⇒ direct nhanh ~2,1× và giảm 2 Worker hop.
  */
 async function putPart(
 	uploadSessionId: string,
@@ -60,29 +66,36 @@ async function putPart(
 	part?: { partNumber: number; uploadId?: string },
 ): Promise<string> {
 	let response: Response | null = null;
-	let firstError: unknown = null;
+	let directError: unknown = null;
 	try {
-		response = await uploadContent(
-			uploadSessionId,
-			part ? { partNumber: part.partNumber, uploadId: part.uploadId } : {},
-			blob,
-			headers ?? {},
+		response = await fetch(target, {
+			method: 'PUT',
+			headers: headers ?? {},
+			body: blob,
 			signal,
-		);
+		});
 	} catch (error) {
-		firstError = error;
+		directError = error;
 	}
-	if (!response || response.status >= 500) {
+	// Chỉ fallback khi đường trực tiếp không dùng được (bị CSP chặn, lỗi mạng)
+	// hoặc B2 trả lỗi. 4xx từ B2 (403 URL hết hạn) cũng thử proxy: API tự ký
+	// lại URL mới nên có thể cứu được phiên upload.
+	// Ngoài ra: nếu B2 trả 200 nhưng browser KHÔNG đọc được ETag (bucket CORS
+	// bỏ `ExposeHeader: ETag`) ⇒ phải gọi proxy vì API trả kèm
+	// `access-control-expose-headers: ETag` ⇒ complete mới có etag hợp lệ.
+	const directEtag = response?.ok ? (response.headers.get('etag') ?? '') : '';
+	if (!response || !response.ok || directEtag === '') {
 		try {
-			const direct = await fetch(target, {
-				method: 'PUT',
-				headers: headers ?? {},
-				body: blob,
+			const proxied = await uploadContent(
+				uploadSessionId,
+				part ? { partNumber: part.partNumber, uploadId: part.uploadId } : {},
+				blob,
+				headers ?? {},
 				signal,
-			});
-			if (direct.ok || !response) response = direct;
+			);
+			if (proxied.ok || !response) response = proxied;
 		} catch (error) {
-			if (!response) throw firstError ?? error;
+			if (!response) throw directError ?? error;
 		}
 	}
 	if (!response) {
@@ -96,19 +109,41 @@ async function putPart(
 }
 
 /**
+ * Tạo tên không trùng trong thư mục — giống Nextcloud (`bug.txt` → `bug (1).txt`).
+ *
+ * Server từ chối trùng tên (409) **sau khi** đã nhận hết dữ liệu ⇒ client phải
+ * tự tránh trùng trước khi upload, nếu không người dùng thấy "Thất bại" dù file
+ * đã có trong thư mục.
+ */
+export function uniqueFileName(name: string, taken: Iterable<string>): string {
+	const used = new Set<string>();
+	for (const item of taken) used.add(item.toLowerCase());
+	if (!used.has(name.toLowerCase())) return name;
+	const dot = name.lastIndexOf('.');
+	const stem = dot > 0 ? name.slice(0, dot) : name;
+	const ext = dot > 0 ? name.slice(dot) : '';
+	for (let index = 1; index < 1000; index += 1) {
+		const candidate = `${stem} (${index})${ext}`;
+		if (!used.has(candidate.toLowerCase())) return candidate;
+	}
+	return `${stem} (${Date.now()})${ext}`;
+}
+
+/**
  * Upload 1 file theo 2 chế độ:
  * - single  (< 100MB): 1 presigned PUT.
  * - multipart (>= 100MB): chia part 64MB, presign theo lô 20, PUT song song 3 luồng.
  *
- * Body đi qua API (API chuyển tiếp tới B2 qua relay) vì CSP của Cloudflare edge
- * có thể chặn host B2 trong `connect-src` — xem `putPart`.
+ * Body đi thẳng tới B2 bằng presigned URL (nhanh, 1 hop); nếu bị chặn bởi CSP
+ * edge thì fallback qua API — xem `putPart`.
  */
 export async function uploadFile(
 	file: File,
 	options: UploadOptions = {},
 ): Promise<{ id: string; name: string; size: number }> {
+	const fileName = options.name ?? file.name;
 	const session = await createUploadSession({
-		fileName: file.name,
+		fileName,
 		contentType: file.type || 'application/octet-stream',
 		totalSize: file.size,
 		folderId: options.folderId ?? null,
@@ -117,12 +152,22 @@ export async function uploadFile(
 	if (session.mode === 'single') {
 		const part = session.parts[0];
 		if (!part) throw new Error('thiếu URL upload');
-		const etag = await putPart(session.uploadSessionId, part.url, part.headers, file, options.signal);
-		const completed = await completeUpload(session.uploadSessionId, {
-			parts: [{ partNumber: 1, etag, size: file.size }],
-		});
-		options.onProgress?.({ uploadedBytes: file.size, totalBytes: file.size, partsUploaded: 1, partsTotal: 1 });
-		return completed.file;
+		try {
+			const etag = await putPart(session.uploadSessionId, part.url, part.headers, file, options.signal);
+			const completed = await completeUpload(session.uploadSessionId, {
+				parts: [{ partNumber: 1, etag, size: file.size }],
+			});
+			options.onProgress?.({ uploadedBytes: file.size, totalBytes: file.size, partsUploaded: 1, partsTotal: 1 });
+			return completed.file;
+		} catch (error) {
+			// Huỷ session để không rò quota + không chặn session mới (giới hạn 50).
+			try {
+				await abortUpload(session.uploadSessionId);
+			} catch {
+				// B2 lifecycle sẽ dọn object treo.
+			}
+			throw error;
+		}
 	}
 
 	const uploadId = session.uploadId;

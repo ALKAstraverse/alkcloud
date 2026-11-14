@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
-import { uploadFile, uploadFiles } from '../src/lib/upload.js';
+import { uniqueFileName, uploadFile, uploadFiles } from '../src/lib/upload.js';
 
 /**
  * WS-I — kiểm thử engine upload phía client.
@@ -31,46 +31,61 @@ interface PutCall {
 }
 
 interface Harness {
+	/** Tất cả lần gửi part (direct + proxy). */
 	puts: PutCall[];
-	/** PUT đi thẳng vào B2 (đường fallback khi API proxy lỗi). */
+	/** PUT thẳng vào presigned URL của B2 — đường CHÍNH (nhanh, 1 hop). */
 	directPuts: string[];
+	/** PUT qua API proxy — đường FALLBACK (khi bị CSP chặn hoặc B2 lỗi). */
+	proxyPuts: string[];
 	completed: Array<{ uploadSessionId: string; parts: Array<{ partNumber: number; etag: string; size: number }>; uploadId?: string }>;
 	aborted: string[];
+	/** Tên file gửi lên server khi tạo upload session. */
+	createdNames: string[];
 	mode: 'single' | 'multipart';
 	partCount: number;
 	partSize: number;
 	failPutAt: number | null;
-	/** Fail mọi PUT (proxy lẫn fallback) — dùng khi cần lỗi xác định (part chạy song song). */
+	/** Fail mọi PUT (direct lẫn proxy) — dùng khi cần lỗi xác định (part chạy song song). */
 	failAllPuts: boolean;
+	/** Đường direct bị chặn (CSP/lỗi mạng) ⇒ phải fallback qua proxy. */
+	failDirect: boolean;
 }
 
 function stubApi(harness: Harness): void {
+	// Khi 1 lần gửi direct lỗi, lần fallback qua proxy của CÙNG part đó cũng
+	// phải lỗi — nếu không thì fallback cứu được và file không "thất bại".
+	let failFallback = false;
 	globalThis.fetch = (async (url: string | URL, init: RequestInit = {}) => {
 		const href = String(url);
 		const method = init.method ?? 'GET';
 
-		// Gửi part: đường chính là API proxy (`POST /uploads/:id/content`),
-		// đường fallback là PUT thẳng vào presigned URL của B2.
+		// Gửi part: đường chính là PUT thẳng vào presigned URL của B2,
+		// đường fallback là API proxy (`POST /uploads/:id/content`).
 		if (method === 'PUT' || (method === 'POST' && href.includes('/content'))) {
 			const body = init.body as Blob;
 			const size = body.size;
 			const isProxy = href.includes('/uploads/') && href.includes('/content');
-			const method = (init.method ?? 'GET').toUpperCase();
-			if (isProxy) {
-				harness.puts.push({ url: href, size, etag: `etag-${href}-${harness.puts.length}` });
-			} else {
-				harness.directPuts.push(href);
-			}
+			const etag = `etag-${href}-${harness.puts.length}`;
+			harness.puts.push({ url: href, size, etag });
+			if (isProxy) harness.proxyPuts.push(href);
+			else harness.directPuts.push(href);
 			if (harness.failAllPuts) return new Response('boom', { status: 500 });
-			if (harness.failPutAt !== null && harness.puts.length === harness.failPutAt) {
+			if (harness.failDirect && !isProxy) throw new TypeError('Failed to fetch');
+			if (isProxy && failFallback) {
+				failFallback = false;
 				return new Response('boom', { status: 500 });
 			}
-			return new Response('', { status: 200, headers: { etag: `etag-${href}-${harness.puts.length}` } });
+			if (harness.failPutAt !== null && harness.puts.length === harness.failPutAt) {
+				if (!isProxy) failFallback = true;
+				return new Response('boom', { status: 500 });
+			}
+			return new Response('', { status: 200, headers: { etag } });
 		}
 
 		// API calls (base /api/v1).
 		if (href.endsWith('/uploads') && method === 'POST') {
 			const payload = JSON.parse(String(init.body)) as { fileName: string; totalSize: number };
+			harness.createdNames.push(payload.fileName);
 			if (harness.mode === 'single') {
 				return new Response(
 					JSON.stringify({
@@ -145,13 +160,16 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness {
 	return {
 		puts: [],
 		directPuts: [],
+		proxyPuts: [],
 		completed: [],
 		aborted: [],
+		createdNames: [],
 		mode: 'single',
 		partCount: 1,
 		partSize: 1024,
 		failPutAt: null,
 		failAllPuts: false,
+		failDirect: false,
 		...overrides,
 	};
 }
@@ -163,6 +181,8 @@ describe('WS-I — upload single-part', () => {
 		const file = new File([new Uint8Array(500)], 'a.bin');
 		const result = await uploadFile(file);
 		assert.equal(harness.puts.length, 1);
+		assert.equal(harness.directPuts.length, 1, 'đường chính phải là PUT thẳng B2');
+		assert.equal(harness.proxyPuts.length, 0, 'không cần đi qua API proxy');
 		assert.equal(harness.puts[0]?.size, 500, 'toàn bộ file phải nằm trong 1 part');
 		assert.equal(harness.completed.length, 1);
 		assert.equal(harness.completed[0]?.parts.length, 1);
@@ -245,22 +265,28 @@ describe('WS-I — xử lý lỗi upload', () => {
 		assert.equal(harness.completed.length, 0, 'không được complete');
 	});
 
-	it('API proxy lỗi ⇒ thử lại PUT thẳng B2 (fallback)', async () => {
+	it('đường direct bị chặn (CSP/lỗi mạng) ⇒ fallback qua API proxy', async () => {
+		const harness = makeHarness({ mode: 'single', failDirect: true });
+		stubApi(harness);
+		const result = await uploadFile(new File([new Uint8Array(64)], 'a.bin'));
+		assert.equal(result.id, 'fil_1', 'upload phải thành công qua đường fallback');
+		assert.equal(harness.directPuts.length, 1, 'đường direct phải được thử trước');
+		assert.equal(harness.proxyPuts.length, 1, 'sau đó phải fallback qua proxy');
+	});
+
+	it('B2 trả lỗi ở đường direct ⇒ fallback qua API proxy', async () => {
 		const harness = makeHarness({ mode: 'single' });
 		stubApi(harness);
-		// Chỉ đường API proxy lỗi; đường trực tiếp tới B2 vẫn được thử.
 		const originalFetch = globalThis.fetch;
 		globalThis.fetch = (async (url: string | URL, init: RequestInit = {}) => {
 			const href = String(url);
 			const method = (init.method ?? 'GET').toUpperCase();
-			if (method === 'POST' && href.includes('/uploads/') && href.includes('/content')) {
-				return new Response('proxy down', { status: 503 });
-			}
+			if (method === 'PUT') return new Response('forbidden', { status: 403 });
 			return originalFetch(url, init);
 		}) as typeof fetch;
 		const result = await uploadFile(new File([new Uint8Array(64)], 'a.bin'));
-		assert.equal(result.id, 'fil_1', 'upload phải thành công qua đường fallback');
-		assert.equal(harness.directPuts.length, 1, 'phải có 1 PUT thẳng B2');
+		assert.equal(result.id, 'fil_1');
+		assert.equal(harness.proxyPuts.length, 1, 'phải fallback qua proxy');
 	});
 
 	it('cả 2 đường đều lỗi ⇒ ném lỗi', async () => {
@@ -270,11 +296,37 @@ describe('WS-I — xử lý lỗi upload', () => {
 		await assert.rejects(() => uploadFile(new File([new Uint8Array(8)], 'a.bin')));
 	});
 
-	it('lỗi single-part không gọi abort (không có multipart)', async () => {
+	it('lỗi single-part cũng gọi abort (không rò session + quota)', async () => {
 		const harness = makeHarness({ mode: 'single', failAllPuts: true });
 		stubApi(harness);
 		await assert.rejects(() => uploadFile(new File([new Uint8Array(10)], 'a.bin')));
-		assert.equal(harness.aborted.length, 0);
+		assert.equal(harness.aborted.length, 1, 'phải huỷ session để không rò quota');
+	});
+});
+
+describe('WS-I — tên file trùng', () => {
+	it('giữ nguyên tên khi chưa tồn tại', () => {
+		assert.equal(uniqueFileName('bug.txt', []), 'bug.txt');
+	});
+
+	it('tự thêm hậu tố khi trùng (giống Nextcloud)', () => {
+		assert.equal(uniqueFileName('bug.txt', ['bug.txt']), 'bug (1).txt');
+		assert.equal(uniqueFileName('bug.txt', ['bug.txt', 'bug (1).txt']), 'bug (2).txt');
+	});
+
+	it('so khớp không phân biệt hoa thường', () => {
+		assert.equal(uniqueFileName('BUG.TXT', ['bug.txt']), 'BUG (1).TXT');
+	});
+
+	it('file không có đuôi vẫn đổi tên được', () => {
+		assert.equal(uniqueFileName('README', ['README']), 'README (1)');
+	});
+
+	it('dùng tên truyền vào khi tạo upload session', async () => {
+		const harness = makeHarness();
+		stubApi(harness);
+		await uploadFile(new File([new Uint8Array(10)], 'bug.txt'), { name: 'bug (1).txt' });
+		assert.deepEqual(harness.createdNames, ['bug (1).txt']);
 	});
 });
 

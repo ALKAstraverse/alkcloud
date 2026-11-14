@@ -28,6 +28,9 @@
 | BUG-17 | `scripts/bootstrap-owner.ts` tạo owner bằng Argon2id ⇒ tài khoản mới không đăng nhập được | Cao |
 | BUG-18 | `__BUILD_ID__` bị tree-shake ⇒ mất cơ chế đối chiếu bundle theo runbook | Thấp |
 | BUG-19 | `npm run bench` fail `POST /uploads → 429`: benchmark tạo 200 session upload rồi mới huỷ, vượt `MAX_OPEN_UPLOAD_SESSIONS = 50` (guard Phase 6) | Trung bình |
+| BUG-20 | Upload chậm: dữ liệu đi qua 2 Worker hop (API → relay → B2) + 3 lượt gọi API tuần tự mỗi file | Trung bình |
+| BUG-21 | Upload trùng tên báo "Thất bại" (409) dù file đã có trong thư mục; session `OPEN` bị rò quota | Cao |
+| BUG-22 | Hàng đợi upload chạy tuần tự ⇒ nhiều file rất chậm | Thấp |
 
 ### Changed
 
