@@ -94,7 +94,15 @@ function median(values: number[]): number {
 	return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
 }
 
-async function measure(name: string, iterations: number, fn: (index: number) => Promise<void>): Promise<BenchResult> {
+async function measure(
+	name: string,
+	iterations: number,
+	// Callback có thể trả về **thời gian đo riêng (ms)** ⇒ phần cleanup chạy
+	// sau đó không lẫn vào mẫu đo (vd `POST /uploads`: phải huỷ session ngay
+	// để không vượt `MAX_OPEN_UPLOAD_SESSIONS`, nhưng thời gian huỷ không
+	// thuộc đường code cần đo).
+	fn: (index: number) => Promise<void | number>,
+): Promise<BenchResult> {
 	// Warm-up: loại bỏ ảnh hưởng JIT + lazy init (zod schema compile…).
 	for (let index = 0; index < Math.min(20, iterations); index++) await fn(index);
 
@@ -103,17 +111,18 @@ async function measure(name: string, iterations: number, fn: (index: number) => 
 	const roundRps: number[] = [];
 	for (let round = 0; round < ROUNDS; round++) {
 		const samples: number[] = [];
-		const start = performance.now();
 		for (let index = 0; index < iterations; index++) {
 			const t0 = performance.now();
-			await fn(index);
+			const customMs = await fn(index);
 			// `performance.now()` trả ms ⇒ chuyển sang µs ngay để p95 và mean cùng đơn vị.
-			samples.push((performance.now() - t0) * 1000);
+			const elapsedMs = typeof customMs === 'number' ? customMs : performance.now() - t0;
+			samples.push(elapsedMs * 1000);
 		}
-		const totalMs = performance.now() - start;
-		roundMeans.push((totalMs / iterations) * 1000);
+		// `samples` tính bằng µs ⇒ tổng ra ms.
+		const sampleTotalMs = samples.reduce((sum, value) => sum + value, 0) / 1000;
+		roundMeans.push((sampleTotalMs / iterations) * 1000);
 		roundP95.push(percentile(samples, 95));
-		roundRps.push(iterations / (totalMs / 1000));
+		roundRps.push(iterations / (sampleTotalMs / 1000));
 	}
 
 	return {
@@ -240,21 +249,22 @@ async function main(): Promise<void> {
 
 	// Vòng đo CHỈ tính thời gian của POST /uploads. Việc huỷ session (cleanup)
 	// diễn ra NGOÀI vòng đo, nếu không sẽ đo nhầm 2 request thay vì 1.
-	const uploadSessionIds: string[] = [];
 	results.push(
 		await measure('POST /uploads (presign)', 200, async () => {
+			const t0 = performance.now();
 			const response = await request('/uploads', {
 				method: 'POST',
 				body: { fileName: 'bench.txt', contentType: 'text/plain', totalSize: 1024, checksumSha256: null },
 			});
+			const elapsedMs = performance.now() - t0;
 			if (response.status !== 201) throw new Error(`POST /uploads → ${response.status}`);
 			const payload = (await response.json()) as { uploadSessionId: string };
-			uploadSessionIds.push(payload.uploadSessionId);
+			// Huỷ session NGAY (ngoài mẫu đo): API giới hạn
+			// `MAX_OPEN_UPLOAD_SESSIONS` (50) — để 200 session tồn tại sẽ bị 429.
+			await request(`/uploads/${payload.uploadSessionId}`, { method: 'DELETE' });
+			return elapsedMs;
 		}),
 	);
-	for (const sessionId of uploadSessionIds) {
-		await request(`/uploads/${sessionId}`, { method: 'DELETE' });
-	}
 
 	results.push(
 		await measure('GET /audit (100 events)', 200, async () => {

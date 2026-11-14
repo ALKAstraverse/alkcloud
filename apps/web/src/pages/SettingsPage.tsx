@@ -69,6 +69,9 @@ export function SettingsPage({ ownerEmail, usage, mode, onRefresh }: SettingsPag
 				{section === 'security' ? <SecuritySection onRefresh={onRefresh} /> : null}
 				{section === 'sessions' ? <SessionsSection /> : null}
 				{section === 'appearance' ? <AppearanceSection /> : null}
+				<p className="muted" style={{ fontSize: 'var(--text-xs)', marginTop: 'var(--space-6)' }}>
+					Phiên bản web: <span style={{ fontFamily: 'var(--font-mono)' }}>{__BUILD_ID__}</span>
+				</p>
 			</div>
 		</div>
 	);

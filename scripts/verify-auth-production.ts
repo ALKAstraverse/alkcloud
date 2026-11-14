@@ -10,9 +10,9 @@
 import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { deriveAuthKey } from './lib/auth-key.js';
 
 const require = createRequire(import.meta.url);
-const { argon2id } = require('hash-wasm');
 const crypto = require('node:crypto');
 
 const API = process.env.ALKCLOUD_E2E_API_URL ?? 'https://api.alk.xx.kg/api/v1';
@@ -43,22 +43,6 @@ function b64u(bytes: Uint8Array): string {
 	return Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function deriveAuthKey(password: string, saltB64u: string, paramsRaw: string): Promise<string> {
-	const params = paramsRaw
-		? (JSON.parse(paramsRaw) as { memorySize: number; iterations: number; parallelism: number; outputLength: number })
-		: { memorySize: 19_456, iterations: 2, parallelism: 1, outputLength: 32 };
-	const saltBytes = Buffer.from(saltB64u.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-	const hash = await argon2id({
-		password,
-		salt: saltBytes,
-		parallelism: params.parallelism,
-		iterations: params.iterations,
-		memorySize: params.memorySize,
-		hashLength: params.outputLength,
-		outputType: 'binary',
-	});
-	return b64u(new Uint8Array(hash));
-}
 
 function cookieFrom(response: Response): string {
 	const raw = response.headers.get('set-cookie');

@@ -14,7 +14,8 @@
 # Kiểm tra:
 #  1. AlkCloud API: /health trả 200 + service đúng.
 #  2. Gateway KHÔNG bị route của AlkCloud che: https://api.alk.xx.kg/health vẫn trả 200.
-#  3. Web: https://cloud.alk.xx.kg/ trả 200 (nếu đã tạo DNS).
+#  3. Web: https://cloud.alk.xx.kg/ trả 200, hoặc 307 → /app/<version>/ trả 200
+#     (entry point có version — Phase 6; nếu đã tạo DNS).
 #  4. Header bảo mật: HSTS, nosniff, frame-options trên response API.
 #  5. Route API không rò endpoint nội bộ (404 với mã chuẩn).
 set -uo pipefail
@@ -64,6 +65,15 @@ WEB_RESP="$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' "${WEB_URL}/" 
 WEB_RESP="${WEB_RESP:-000}"
 if [ "$WEB_RESP" = "200" ]; then
   pass "web trả 200"
+elif [ "$WEB_RESP" = "307" ]; then
+  # Phase 6: `/` redirect tới `/app/<version>/` để né cache edge. Phải follow
+  # redirect và xác nhận đích trả 200 (nếu không, SPA chết dù entry point sống).
+  WEB_FINAL="$(curl -sSL --max-time 20 -o /dev/null -w '%{http_code}' "${WEB_URL}/" 2>/dev/null || true)"
+  if [ "${WEB_FINAL:-000}" = "200" ]; then
+    pass "web 307 → /app/<version>/ trả 200 (entry point có version — Phase 6)"
+  else
+    fail "web redirect đích trả ${WEB_FINAL:-000}"
+  fi
 elif [ "$WEB_RESP" = "000" ]; then
   skip "chưa có DNS cloud.alk.xx.kg (B7 chưa hoàn tất)"
 else

@@ -4,8 +4,10 @@
  *
  * - Đọc OWNER_EMAIL / OWNER_PASSWORD / BOOTSTRAP_SETUP_TOKEN từ file local mode 600
  *   (KHÔNG truyền qua argv, KHÔNG in ra terminal).
- * - Dựng authKey bằng đúng thuật toán client (Argon2id + salt ngẫu nhiên,
- *   hash-wasm) ⇒ server verify được.
+ * - Dựng authKey bằng đúng thuật toán client (PBKDF2-HMAC-SHA256 600 000 vòng
+ *   qua WebCrypto — khớp `apps/web/src/lib/kdf.ts`) ⇒ server verify được.
+ *   Argon2id KHÔNG dùng được nữa: CSP edge chặn WebAssembly và client đã
+ *   chuyển sang PBKDF2 (tài khoản tạo bằng Argon2id sẽ không đăng nhập được).
  * - Ghi recovery codes vào file mode 600, KHÔNG in ra stdout.
  * - Idempotent: nếu đã có owner ⇒ không bootstrap lại (trả về thông báo).
  *
@@ -14,9 +16,9 @@
 import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { deriveAuthKey } from './lib/auth-key.js';
 
 const require = createRequire(import.meta.url);
-const { argon2id } = require('hash-wasm');
 
 const API = process.env.ALKCLOUD_E2E_API_URL ?? 'https://api.alk.xx.kg/api/v1';
 const ORIGIN = process.env.ALKCLOUD_E2E_ORIGIN ?? 'https://cloud.alk.xx.kg';
@@ -65,17 +67,8 @@ async function main(): Promise<void> {
 	const saltBytes = new Uint8Array(16);
 	for (let i = 0; i < saltBytes.length; i += 1) saltBytes[i] = require('node:crypto').randomBytes(1)[0]!;
 	const salt = bytesToBase64Url(saltBytes);
-	const params = { memorySize: 19_456, iterations: 2, parallelism: 1, outputLength: 32 };
-	const hash = await argon2id({
-		password,
-		salt: Buffer.from(saltBytes),
-		parallelism: params.parallelism,
-		iterations: params.iterations,
-		memorySize: params.memorySize,
-		hashLength: params.outputLength,
-		outputType: 'binary',
-	});
-	const authKey = bytesToBase64Url(new Uint8Array(hash));
+	const params = { algo: 'pbkdf2', hash: 'sha-256', iterations: 600_000, outputLength: 32 };
+	const authKey = await deriveAuthKey(password, salt, JSON.stringify(params));
 
 	// 2. Bootstrap.
 	const response = await fetch(`${API}/auth/bootstrap`, {

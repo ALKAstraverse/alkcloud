@@ -5,6 +5,38 @@
 
 ---
 
+## [Unreleased] — Phase 7 (14/11/2026) — DEPLOY WEB (REDESIGN UI/UX)
+
+> Trạng thái: **WEB ĐÃ DEPLOY PRODUCTION**. Worker `alkcloud-web` version `0720bb97-594e-4849-9bd2-8f6ce0c4c05a`;
+> `/` → 307 → `/app/CYQ1dFSx/`; E2E production `PASS=21 · FAIL=0`; `check-production-health` PASS.
+> Bằng chứng: `docs/34-PRODUCTION-DEPLOYMENT-REPORT.md` §14–§17 · `docs/42-UI-UX-REDESIGN.md` · `docs/44-VISUAL-QA-REPORT.md`.
+
+### Added
+
+| Hạng mục | Nội dung | Tài liệu |
+| :--- | :--- | :--- |
+| **Redesign UI/UX toàn diện** | Design system (token light/dark, typography, component, breakpoint), file manager mới (grid/list, multi-select + bulk bar, sort, breadcrumb, drag&drop, upload queue tuần tự), trang Thùng rác, trang Cài đặt 4 mục, login 3 chế độ + recovery codes | `docs/42`, `docs/43` |
+| **Font tự host** | Inter (SIL OFL 1.1) — 3 file `woff2` + `OFL.txt`; không gọi font bên thứ ba | `docs/43` |
+| **Helper KDF cho script Node** | `scripts/lib/auth-key.ts` — PBKDF2 theo `params` server trả (fallback Argon2id cho tài khoản cũ) | `docs/34` §16 |
+
+### Fixed
+
+| ID | Lỗi | Mức độ |
+| :--- | :--- | :--- |
+| BUG-15 | `infra/check-production-health.sh` fail vì kỳ vọng `/` trả 200 trong khi entry point có version trả 307 | Trung bình |
+| BUG-16 | Script E2E/verify-auth/verify-monitoring hard-code Argon2id ⇒ không chạy được sau khi server chuyển KDF sang PBKDF2 | Cao |
+| BUG-17 | `scripts/bootstrap-owner.ts` tạo owner bằng Argon2id ⇒ tài khoản mới không đăng nhập được | Cao |
+| BUG-18 | `__BUILD_ID__` bị tree-shake ⇒ mất cơ chế đối chiếu bundle theo runbook | Thấp |
+| BUG-19 | `npm run bench` fail `POST /uploads → 429`: benchmark tạo 200 session upload rồi mới huỷ, vượt `MAX_OPEN_UPLOAD_SESSIONS = 50` (guard Phase 6) | Trung bình |
+
+### Changed
+
+| Hạng mục | Nội dung | Tài liệu |
+| :--- | :--- | :--- |
+| **Bundle web** | `index-CYQ1dFSx.js` 357.84 kB (gzip **109.49 kB**), `index-D7KVtLYF.css` 50.69 kB (gzip 9.56 kB), `react-DbHEDQBy.js` 11.72 kB | `docs/14` §1 |
+
+---
+
 ## [Unreleased] — Phase 5 (13/11/2026) — DEPLOY PRODUCTION
 
 > Trạng thái: **PRODUCTION VERIFIED**. API + relay + Web + D1 + DNS + owner + cron + B2 đã chạy thật;

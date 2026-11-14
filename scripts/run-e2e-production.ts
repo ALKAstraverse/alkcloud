@@ -11,9 +11,9 @@ import { resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { readFileSync as readFileSyncUnsafe } from 'node:fs';
+import { deriveAuthKey } from './lib/auth-key.js';
 
 const require = createRequire(import.meta.url);
-const { argon2id } = require('hash-wasm');
 
 const API = process.env.ALKCLOUD_E2E_API_URL ?? 'https://api.alk.xx.kg/api/v1';
 const ORIGIN = process.env.ALKCLOUD_E2E_ORIGIN ?? 'https://cloud.alk.xx.kg';
@@ -43,20 +43,8 @@ async function main(): Promise<void> {
 
 	const paramsResponse = await fetch(`${API}/auth/params`, { headers: { origin: ORIGIN } });
 	const paramsBody = (await paramsResponse.json()) as { salt: string; params: string };
-	const params = paramsBody.params
-		? (JSON.parse(paramsBody.params) as { memorySize: number; iterations: number; parallelism: number; outputLength: number })
-		: { memorySize: 19_456, iterations: 2, parallelism: 1, outputLength: 32 };
-	const saltBytes = Buffer.from(paramsBody.salt.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-	const hash = await argon2id({
-		password,
-		salt: saltBytes,
-		parallelism: params.parallelism,
-		iterations: params.iterations,
-		memorySize: params.memorySize,
-		hashLength: params.outputLength,
-		outputType: 'binary',
-	});
-	const authKey = Buffer.from(hash).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	// KDF theo đúng `params` server trả về (PBKDF2 hiện hành, Argon2id fallback).
+	const authKey = await deriveAuthKey(password, paramsBody.salt, paramsBody.params ?? '');
 
 	// Token Cloudflare cho bước backup (wrangler) — đọc theo LABEL, không in.
 	const cfToken = (() => {
