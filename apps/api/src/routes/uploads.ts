@@ -19,6 +19,15 @@ import { requireOwner, type AppEnv } from '../middleware/auth.js';
 export const MULTIPART_THRESHOLD_BYTES = 100 * 1024 * 1024; // 100MB
 export const PART_SIZE_BYTES = 64 * 1024 * 1024; // 64MB => file 50GB cần ≤ 800 part (< 1000)
 export const DEFAULT_QUOTA_BYTES = 100 * 1024 * 1024 * 1024;
+/**
+ * Số upload session được mở đồng thời (authoritative, đếm từ D1).
+ *
+ * AUD-03: lớp rate limit ở Cloudflare edge là theo IP ⇒ 1 IP có thể tạo hàng loạt
+ * session. Mỗi session giữ 1 quota reservation ⇒ session rác làm nghẽn quota và bảng
+ * `upload_sessions`. Giới hạn này **theo account** (chỉ có 1 owner) nên không phụ
+ * thuộc IP ⇒ chặn được cả trường hợp đổi IP.
+ */
+export const MAX_OPEN_UPLOAD_SESSIONS = 50;
 
 
 /**
@@ -149,6 +158,15 @@ export function createUploadRoutes(context: AppContext): Hono<AppEnv> {
 		const sessionId = `upl_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
 		const reservationId = `qrs_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
 		const now = context.now();
+		// AUD-03: chặn tạo session vô hạn (authoritative, đếm từ D1 — không phụ thuộc
+		// isolate/IP). Session quá hạn được cron dọn; client có thể tự abort.
+		const openSessions = await context.db.countOpenUploadSessions(now.toISOString());
+		if (openSessions >= MAX_OPEN_UPLOAD_SESSIONS) {
+			throw AppError.quota(
+				`Đã có ${openSessions} upload đang chờ — vượt giới hạn ${MAX_OPEN_UPLOAD_SESSIONS}. Hãy hoàn tất hoặc huỷ các upload cũ.`,
+				120,
+			);
+		}
 		const reserved = await context.db.reserveQuota(
 			{ id: reservationId, ownerId: owner.id, uploadSessionId: sessionId, bytes: input.totalSize, now: now.toISOString() },
 			quotaBytes,

@@ -117,6 +117,11 @@ async function runScheduledTasksInner(deps: ScheduledDeps, startedAt: number): P
 		}
 	}
 
+	// 2b. Release quota reservation **mồ côi** (AUD-04): reservation không gắn với
+	//     session OPEN nào (session đã hoàn tất/abort/bị xoá, hoặc tạo session lỗi).
+	//     Trước đây reservation mồ côi giữ quota vĩnh viễn ⇒ owner không upload được.
+	await db.releaseOrphanQuotaReservations(now);
+
 	// 3. Purge file đã hết retention 30 ngày (CHỈ khi mode = NORMAL) — **2 pha**.
 	//
 	// Pha 1 (mark): đánh dấu `PENDING`, object ở storage **CÒN NGUYÊN** ⇒ owner vẫn

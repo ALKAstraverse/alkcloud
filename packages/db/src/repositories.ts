@@ -1347,6 +1347,39 @@ export class Database {
 		}));
 	}
 
+	/**
+	 * Số upload session đang OPEN (chưa hết hạn) — **authoritative** (đọc từ D1,
+	 * không phụ thuộc isolate ⇒ áp dụng được cho cả nhiều PoP).
+	 *
+	 * Dùng để chặn client tạo hàng loạt session (AUD-03): mỗi session giữ 1 quota
+	 * reservation ⇒ session rác làm nghẽn quota và bảng `upload_sessions`.
+	 */
+	async countOpenUploadSessions(now: string): Promise<number> {
+		const result = await this.driver.query<{ n: number }>(
+			"SELECT COUNT(*) AS n FROM upload_sessions WHERE status = 'OPEN' AND expires_at > ?",
+			[now],
+		);
+		return num(result.rows[0]?.n);
+	}
+
+	/**
+	 * Release các reservation HELD **mồ côi**: không gắn với upload session nào,
+	 * hoặc session đã không còn OPEN (đã hoàn tất / abort / bị xoá).
+	 *
+	 * Trước đây reservation mồ côi giữ quota vĩnh viễn ⇒ owner không upload được
+	 * dù dung lượng thật còn trống (AUD-04).
+	 */
+	async releaseOrphanQuotaReservations(now: string): Promise<number> {
+		const result = await this.driver.run(
+			`UPDATE quota_reservations SET state = 'RELEASED', released_at = ?
+			 WHERE state = 'HELD'
+			   AND (upload_session_id IS NULL
+			     OR upload_session_id NOT IN (SELECT id FROM upload_sessions WHERE status = 'OPEN'))`,
+			[now],
+		);
+		return result.changes ?? 0;
+	}
+
 	// ----------------------------------------------------------------- usage
 	async bumpUsageDaily(day: string, patch: Record<string, number>, now: string): Promise<void> {
 		const columns = Object.keys(patch);
