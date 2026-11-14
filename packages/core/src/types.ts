@@ -38,6 +38,16 @@ export interface Folder {
 	version: number;
 }
 
+/**
+ * Trạng thái purge 2 pha (migration 0006).
+ *
+ * - `NONE` — chưa có yêu cầu purge.
+ * - `PENDING` — đã đánh dấu, **object ở storage còn nguyên** ⇒ restore vẫn được
+ *   (và huỷ purge).
+ * - `PURGING` — đã bắt đầu xoá object ⇒ restore bị từ chối (tránh file "ma").
+ */
+export type PurgeState = 'NONE' | 'PENDING' | 'PURGING';
+
 export interface FileItem {
 	id: Id;
 	folderId: Id | null;
@@ -54,6 +64,8 @@ export interface FileItem {
 	deletedAt: IsoDate | null;
 	deletedBatchId: Id | null;
 	purgeAfter: IsoDate | null;
+	purgeState: PurgeState;
+	purgeMarkedAt: IsoDate | null;
 	version: number;
 }
 
@@ -117,6 +129,7 @@ export type AuditAction =
 	| 'file.create'
 	| 'file.delete'
 	| 'file.purge'
+	| 'file.purge.pending'
 	| 'file.restore'
 	| 'file.rename'
 	| 'file.move'

@@ -161,6 +161,10 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		const mode = c.get('quotaMode');
 		const file = await context.db.getFile(c.req.param('id'));
 		if (!file || !file.deletedAt) throw AppError.notFound('File không trong trash');
+		// Đang xoá vĩnh viễn (object có thể đã bị xoá) ⇒ không khôi phục được.
+		if (file.purgeState === 'PURGING') {
+			throw AppError.conflict('File đang được xoá vĩnh viễn — không thể khôi phục');
+		}
 		// Thư mục chứa file còn trong trash ⇒ file vô hình sau khi restore.
 		if (file.folderId) {
 			const folder = await context.db.getFolder(file.folderId);
@@ -169,7 +173,10 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 			}
 		}
 		try {
-			await context.db.restoreFile(file.id, context.now().toISOString());
+			const restored = await context.db.restoreFile(file.id, context.now().toISOString());
+			if (!restored) {
+				throw AppError.conflict('File đang được xoá vĩnh viễn — không thể khôi phục');
+			}
 		} catch (error) {
 			mapDbConflict(error, `Đã có file tên "${file.name}" trong thư mục này`);
 		}
@@ -203,6 +210,13 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 			throw AppError.conflict('Còn upload session liên quan — abort upload trước');
 		}
 
+		// AUD-02: đánh dấu `PURGING` **TRƯỚC** khi xoá object ⇒ restore chạy đồng
+		// thời bị từ chối (409) ⇒ không tạo được file "ma" (row còn, object đã mất).
+		const started = await context.db.markFilePurgeStarted(file.id, context.now().toISOString());
+		if (!started) {
+			throw AppError.conflict('File đang được xoá vĩnh viễn — không thao tác');
+		}
+
 		// Purge toàn bộ version của object ở B2 (nếu versioning bật).
 		try {
 			const versions = await context.storage.listObjectVersions(file.objectKey);
@@ -211,6 +225,9 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 			}
 			if (versions.length === 0) await context.storage.deleteObject(file.objectKey);
 		} catch (error) {
+			// Object còn nguyên ⇒ trả state về `NONE` để owner vẫn restore được
+			// và lần cron sau thử xoá lại.
+			await context.db.cancelFilePurge(file.id, context.now().toISOString());
 			throw AppError.quota('Chưa xóa được object trên B2 — sẽ thử lại ở lần cron sau', 300);
 		}
 		// SEC-09: xoá có điều kiện — nếu file đã được restore (hoặc purge_after

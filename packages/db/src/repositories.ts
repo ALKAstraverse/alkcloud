@@ -66,6 +66,7 @@ function mapFolder(row: Row): Folder {
 }
 
 function mapFile(row: Row): FileItem {
+	const purgeState = str(row.purge_state || 'NONE');
 	return {
 		id: str(row.id),
 		folderId: nullableStr(row.folder_id),
@@ -82,6 +83,8 @@ function mapFile(row: Row): FileItem {
 		deletedAt: nullableStr(row.deleted_at),
 		deletedBatchId: nullableStr(row.deleted_batch_id),
 		purgeAfter: nullableStr(row.purge_after),
+		purgeState: (purgeState === 'PENDING' || purgeState === 'PURGING' ? purgeState : 'NONE') as FileItem['purgeState'],
+		purgeMarkedAt: nullableStr(row.purge_marked_at),
 		version: num(row.version),
 	};
 }
@@ -630,17 +633,29 @@ export class Database {
 
 	async softDeleteFile(id: Id, batchId: Id, purgeAfter: string, now: string): Promise<void> {
 		await this.driver.run(
-			`UPDATE files SET deleted_at = ?, deleted_batch_id = ?, purge_after = ?, updated_at = ?, version = version + 1
+			`UPDATE files SET deleted_at = ?, deleted_batch_id = ?, purge_after = ?,
+				purge_state = 'NONE', purge_marked_at = NULL, updated_at = ?, version = version + 1
 			 WHERE id = ? AND deleted_at IS NULL`,
 			[now, batchId, purgeAfter, now, id],
 		);
 	}
 
-	async restoreFile(id: Id, now: string): Promise<void> {
-		await this.driver.run(
-			'UPDATE files SET deleted_at = NULL, deleted_batch_id = NULL, purge_after = NULL, updated_at = ?, version = version + 1 WHERE id = ?',
+	/**
+	 * Khôi phục file. Trả `false` nếu KHÔNG khôi phục được (file không tồn tại hoặc
+	 * đã ở trạng thái `PURGING` — lúc đó object ở storage có thể đã bị xoá ⇒ khôi
+	 * phục sẽ tạo file "ma").
+	 *
+	 * Việc huỷ purge (`purge_state = 'NONE'`) nằm trong **cùng** câu UPDATE ⇒ điều
+	 * kiện "còn trong trash" và "chưa bắt đầu xoá object" được kiểm tra **nguyên tử**.
+	 */
+	async restoreFile(id: Id, now: string): Promise<boolean> {
+		const result = await this.driver.run(
+			`UPDATE files SET deleted_at = NULL, deleted_batch_id = NULL, purge_after = NULL,
+				purge_state = 'NONE', purge_marked_at = NULL, updated_at = ?, version = version + 1
+			 WHERE id = ? AND deleted_at IS NOT NULL AND purge_state != 'PURGING'`,
 			[now, id],
 		);
+		return (result.changes ?? 0) > 0;
 	}
 
 	async listTrashFolders(limit: number, offset = 0): Promise<Folder[]> {
@@ -681,20 +696,87 @@ export class Database {
 		return result.rows.map(mapFile);
 	}
 
+	/**
+	 * Pha 1 của purge: đánh dấu file đã hết hạn thành `PENDING`.
+	 *
+	 * Object ở storage **CÒN NGUYÊN** ⇒ owner vẫn restore được ⇒ huỷ purge ⇒
+	 * không còn cửa sổ "restore xong nhưng object đã bị xoá" (AUD-01).
+	 */
+	async markFilesPendingPurge(now: string, limit: number): Promise<number> {
+		const result = await this.driver.run(
+			`UPDATE files SET purge_state = 'PENDING', purge_marked_at = COALESCE(purge_marked_at, ?)
+			 WHERE id IN (
+				SELECT id FROM files
+				WHERE deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ?
+				  AND purge_state = 'NONE'
+				ORDER BY purge_after ASC LIMIT ?)`,
+			[now, now, limit],
+		);
+		return result.changes ?? 0;
+	}
+
+	/**
+	 * File sẵn sàng xoá object: đã qua grace period (`PENDING`) hoặc đang dở
+	 * (`PURGING` — lần trước xoá object lỗi, cần thử lại).
+	 */
+	async listFilesReadyForPurge(graceCutoff: string, limit: number): Promise<FileItem[]> {
+		const result = await this.driver.query(
+			`SELECT * FROM files
+			 WHERE (purge_state = 'PENDING' AND purge_marked_at IS NOT NULL AND purge_marked_at <= ?)
+			    OR (purge_state = 'PURGING')
+			 ORDER BY purge_after ASC LIMIT ?`,
+			[graceCutoff, limit],
+		);
+		return result.rows.map(mapFile);
+	}
+
+	/**
+	 * Chuyển file sang `PURGING` — bước **trước** khi xoá object.
+	 *
+	 * Từ thời điểm này restore bị từ chối (409) ⇒ không tạo được file "ma" khi
+	 * xoá object xong mà xoá row thất bại (AUD-02).
+	 */
+	async markFilePurgeStarted(id: Id, now: string): Promise<boolean> {
+		const result = await this.driver.run(
+			`UPDATE files SET purge_state = 'PURGING', updated_at = ?
+			 WHERE id = ? AND deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ?
+			   AND purge_state != 'PURGING'`,
+			[now, id, now],
+		);
+		return (result.changes ?? 0) > 0;
+	}
+
+	/**
+	 * Trả state về `NONE` khi xoá object thất bại ⇒ object còn nguyên ⇒ restore an
+	 * toàn; lần cron sau đánh dấu lại và thử xoá (không mất dữ liệu).
+	 */
+	async cancelFilePurge(id: Id, now: string): Promise<void> {
+		await this.driver.run(
+			"UPDATE files SET purge_state = 'NONE', updated_at = ? WHERE id = ? AND purge_state = 'PURGING'",
+			[now, id],
+		);
+	}
+
 	async deleteFileRow(id: Id): Promise<void> {
 		await this.driver.run('DELETE FROM files WHERE id = ?', [id]);
 	}
 
 	/**
-	 * Xoá file VĨNH VIỄN chỉ khi nó VẪN đang trong trash và ĐÃ hết hạn purge.
+	 * Xoá file VĨNH VIỄN chỉ khi nó vẫn đang trong trash, đã hết hạn purge **và**
+	 * purge đã bắt đầu (`purge_state = 'PURGING'`).
 	 *
 	 * SEC-09: purge là thao tác phá huỷ — nếu file đã được restore (hoặc hạn purge
 	 * bị đổi) trong lúc request đang chạy thì xoá vô điều kiện sẽ **mất file vĩnh viễn**
 	 * (object B2 đã xoá, row D1 bị xoá) dù owner vừa khôi phục nó.
+	 *
+	 * AUD-02: chỉ xoá row khi state = `PURGING` ⇒ mọi lần xoá row đều đi qua
+	 * `markFilePurgeStarted` ⇒ luôn có bước đánh dấu trước khi xoá object.
 	 */
 	async deleteFileRowIfStillTrashed(id: Id, now: string): Promise<boolean> {
 		const result = await this.driver.run(
-			'DELETE FROM files WHERE id = ? AND deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ?',
+			`DELETE FROM files
+			 WHERE id = ? AND deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ?
+			   AND purge_state = 'PURGING'`,
 			[id, now],
 		);
 		return (result.changes ?? 0) > 0;

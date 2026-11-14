@@ -12,6 +12,11 @@ import {
 /** Thời gian giữ audit log (ngày). `audit_chain` được giữ vĩnh viễn. */
 export const AUDIT_RETENTION_DAYS = 180;
 /**
+ * Grace period của purge 2 pha (giờ). Sau khi đánh dấu `PENDING`, object ở storage
+ * còn nguyên trong khoảng này ⇒ owner restore được ⇒ huỷ purge (AUD-01).
+ */
+export const PURGE_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
+/**
  * Tên script Worker của AlkCloud — dùng để lọc số request của RIÊNG app
  * trong Cloudflare analytics (BUG-12: lọc client-side không hoạt động vì
  * Worker chạy qua route bị gom vào nhóm `__unknown__`).
@@ -112,12 +117,26 @@ async function runScheduledTasksInner(deps: ScheduledDeps, startedAt: number): P
 		}
 	}
 
-	// 3. Purge file đã hết retention 30 ngày (CHỈ khi mode = NORMAL).
+	// 3. Purge file đã hết retention 30 ngày (CHỈ khi mode = NORMAL) — **2 pha**.
+	//
+	// Pha 1 (mark): đánh dấu `PENDING`, object ở storage **CÒN NGUYÊN** ⇒ owner vẫn
+	// restore được trong grace period ⇒ huỷ purge. Trước đây cron xoá object ngay
+	// khi hết hạn ⇒ file vừa restore là mất vĩnh viễn (AUD-01).
+	//
+	// Pha 2 (execute): sau grace period ⇒ đánh dấu `PURGING` (restore bị từ chối) ⇒
+	// xoá object ở storage ⇒ xoá row D1 **có điều kiện**. Nếu xoá object lỗi ⇒ trả
+	// state về `NONE` (object còn nguyên ⇒ restore an toàn) và thử lại ở cron sau.
 	if (mode === 'NORMAL') {
-		const due = await db.listFilesDueForPurge(now, 20);
-		for (const file of due) {
+		await db.markFilesPendingPurge(now, 50);
+		const graceCutoff = new Date(new Date(now).getTime() - PURGE_GRACE_PERIOD_MS).toISOString();
+		const ready = await db.listFilesReadyForPurge(graceCutoff, 20);
+		for (const file of ready) {
 			const activeShares = await db.countActiveShares(file.id, now);
 			if (activeShares > 0) continue;
+			if (file.purgeState !== 'PURGING') {
+				const started = await db.markFilePurgeStarted(file.id, now);
+				if (!started) continue;
+			}
 			try {
 				const versions = await deps.storage.listObjectVersions(file.objectKey);
 				for (const version of versions) {
@@ -125,9 +144,17 @@ async function runScheduledTasksInner(deps: ScheduledDeps, startedAt: number): P
 				}
 				if (versions.length === 0) await deps.storage.deleteObject(file.objectKey);
 			} catch {
+				await db.cancelFilePurge(file.id, now);
 				continue;
 			}
-			await db.deleteFileRow(file.id);
+			const deleted = await db.deleteFileRowIfStillTrashed(file.id, now);
+			if (!deleted) {
+				logError(EVENTS.cronFailed, {
+					fileId: file.id,
+					reason: 'purge_state_changed',
+				});
+				continue;
+			}
 			await recordAudit({ db, storage: deps.storage, config, now: () => new Date(scheduledTime) }, {
 				action: 'file.purge',
 				actor: 'cron',

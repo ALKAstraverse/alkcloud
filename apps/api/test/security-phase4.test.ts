@@ -389,8 +389,16 @@ describe('SEC-09 — purge chỉ xoá file VẪN đang trong trash', () => {
 			"UPDATE files SET purge_after = '2020-02-01T00:00:00.000Z' WHERE id = ?",
 			[fileId],
 		);
+		// AUD-02: chỉ xoá row khi purge đã BẮT ĐẦU (`purge_state = 'PURGING'`) ⇒ mọi
+		// lần xoá row đều đi qua bước đánh dấu trước khi xoá object ở storage.
+		const withoutMark = await harness.db.deleteFileRowIfStillTrashed(fileId, '2026-01-15T10:00:00.000Z');
+		assert.equal(withoutMark, false, 'chưa đánh dấu PURGING ⇒ KHÔNG được xoá row');
+		assert.ok(await harness.db.getFile(fileId), 'file phải còn nguyên');
+
+		const started = await harness.db.markFilePurgeStarted(fileId, '2026-01-15T10:00:00.000Z');
+		assert.equal(started, true, 'phải đánh dấu PURGING được');
 		const deletedExpired = await harness.db.deleteFileRowIfStillTrashed(fileId, '2026-01-15T10:00:00.000Z');
-		assert.equal(deletedExpired, true, 'file đã hết hạn purge phải xoá được');
+		assert.equal(deletedExpired, true, 'file đã hết hạn purge (đã đánh dấu PURGING) phải xoá được');
 		assert.equal(await harness.db.getFile(fileId), null);
 	});
 
