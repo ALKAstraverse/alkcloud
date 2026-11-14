@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ApiError, API_BASE } from '../lib/api.js';
-import { deriveShareVerifier } from '../lib/argon2.js';
+import { deriveShareVerifier } from '../lib/kdf.js';
 import { downloadToFile } from '../lib/download.js';
 
 interface SharePageProps {

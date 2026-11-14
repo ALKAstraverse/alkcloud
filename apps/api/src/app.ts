@@ -52,7 +52,13 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
 	app.options('*', (c) =>
 		c.body(null, 204, {
-			'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+			// QUAN TRỌNG: danh sách này phải chứa **mọi** method mà web client
+			// dùng từ trình duyệt — nếu thiếu, Chrome chặn request **ngay sau
+			// preflight** (preflight 204 nhưng request thật không bao giờ được
+			// gửi ⇒ "Failed to fetch"). Sự cố đã gặp: `PUT` không có trong danh
+			// sách ⇒ upload chết. Test `apps/web/test/cors-methods.test.ts` chốt
+			// bất biến này.
+			'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
 			'access-control-allow-headers': 'content-type, x-alkcloud-csrf, idempotency-key, x-share-token, x-share-grant',
 			'access-control-max-age': '600',
 		}),

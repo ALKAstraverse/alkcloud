@@ -4,6 +4,7 @@ import {
 	completeUpload,
 	createUploadSession,
 	presignUploadParts,
+	uploadContent,
 } from './api.js';
 
 export interface UploadProgress {
@@ -23,22 +24,59 @@ export interface UploadOptions {
 const MAX_PARTS_PER_REQUEST = 20;
 const CONCURRENCY = 3;
 
+/**
+ * PUT một part.
+ *
+ * Hai đường, thử theo thứ tự:
+ *   1. Qua API (`/uploads/:id/content`) — API chuyển tiếp tới B2 qua relay.
+ *      Đường này không phụ thuộc CSP cho host B2 (chỉ cần `api.alk.xx.kg`).
+ *   2. Nếu đường 1 lỗi mạng/5xx ⇒ thử PUT thẳng vào presigned URL của B2
+ *      (nhanh hơn, không tốn Worker quota, nhưng chỉ chạy được khi CSP cho
+ *      phép host B2).
+ *
+ * Lý do có đường 2: CSP của Cloudflare edge có thể đang cho phép host B2
+ * (sau khi owner sửa Transform Rule) hoặc không — client không nên phụ thuộc
+ * vào một cấu hình duy nhất.
+ */
 async function putPart(
-	url: string,
+	uploadSessionId: string,
+	target: string,
 	headers: Record<string, string> | undefined,
 	blob: Blob,
 	signal?: AbortSignal,
+	part?: { partNumber: number; uploadId?: string },
 ): Promise<string> {
-	const response = await fetch(url, {
-		method: 'PUT',
-		headers: headers ?? {},
-		body: blob,
-		signal,
-	});
+	let response: Response | null = null;
+	let firstError: unknown = null;
+	try {
+		response = await uploadContent(
+			uploadSessionId,
+			part ? { partNumber: part.partNumber, uploadId: part.uploadId } : {},
+			blob,
+			headers ?? {},
+		);
+	} catch (error) {
+		firstError = error;
+	}
+	if (!response || response.status >= 500) {
+		try {
+			const direct = await fetch(target, {
+				method: 'PUT',
+				headers: headers ?? {},
+				body: blob,
+				signal,
+			});
+			if (direct.ok || !response) response = direct;
+		} catch (error) {
+			if (!response) throw firstError ?? error;
+		}
+	}
+	if (!response) {
+		throw new ApiError(0, 'upload_part_failed', 'Không gửi được dữ liệu lên B2');
+	}
 	if (!response.ok) {
 		throw new ApiError(response.status, 'upload_part_failed', `PUT part thất bại (${response.status})`);
 	}
-	// ETag phải được B2 expose qua CORS; nếu không có thì dùng header etag hoặc rỗng.
 	const etag = response.headers.get('etag') ?? '';
 	return etag.replace(/^"|"$/g, '');
 }
@@ -48,7 +86,8 @@ async function putPart(
  * - single  (< 100MB): 1 presigned PUT.
  * - multipart (>= 100MB): chia part 64MB, presign theo lô 20, PUT song song 3 luồng.
  *
- * Mọi request đi thẳng tới B2 — không tốn Worker quota.
+ * Body đi qua API (API chuyển tiếp tới B2 qua relay) vì CSP của Cloudflare edge
+ * có thể chặn host B2 trong `connect-src` — xem `putPart`.
  */
 export async function uploadFile(
 	file: File,
@@ -64,7 +103,7 @@ export async function uploadFile(
 	if (session.mode === 'single') {
 		const part = session.parts[0];
 		if (!part) throw new Error('thiếu URL upload');
-		const etag = await putPart(part.url, part.headers, file, options.signal);
+		const etag = await putPart(session.uploadSessionId, part.url, part.headers, file, options.signal);
 		const completed = await completeUpload(session.uploadSessionId, {
 			parts: [{ partNumber: 1, etag, size: file.size }],
 		});
@@ -103,7 +142,14 @@ export async function uploadFile(
 					const start = (target.partNumber - 1) * session.partSize;
 					const end = Math.min(start + session.partSize, file.size);
 					const blob = file.slice(start, end);
-					const etag = await putPart(target.url, target.headers, blob, options.signal);
+					const etag = await putPart(
+						session.uploadSessionId,
+						target.url,
+						target.headers,
+						blob,
+						options.signal,
+						{ partNumber: target.partNumber, uploadId },
+					);
 					parts.push({ partNumber: target.partNumber, etag, size: blob.size });
 					uploadedBytes += blob.size;
 					reportProgress();

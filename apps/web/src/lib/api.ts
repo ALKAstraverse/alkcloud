@@ -9,7 +9,21 @@
  */
 const viteEnv = (import.meta as { env?: Record<string, string | undefined> }).env ?? {};
 
-export const API_BASE = viteEnv.VITE_ALKCLOUD_API_URL ?? '/api/v1';
+/**
+ * Base URL API mặc định khi build production.
+ *
+ * Web chạy ở `cloud.alk.xx.kg`, API ở `api.alk.xx.kg` ⇒ KHÔNG dùng được
+ * relative path `/api/v1` (Worker web trả SPA fallback `text/html` ⇒ fetch
+ * `.json()` ném lỗi ⇒ UI tưởng "chưa khởi tạo"). Giá trị này là nguồn sự
+ * thật duy nhất trong source; `VITE_ALKCLOUD_API_URL` vẫn ghi đè được khi
+ * deploy sang domain khác.
+ */
+const DEFAULT_PRODUCTION_API_BASE = 'https://api.alk.xx.kg/api/v1';
+
+const isProductionBuild = (import.meta as { env?: Record<string, unknown> }).env?.PROD === true;
+
+export const API_BASE =
+	viteEnv.VITE_ALKCLOUD_API_URL ?? (isProductionBuild ? DEFAULT_PRODUCTION_API_BASE : '/api/v1');
 
 export interface ApiErrorBody {
 	error?: { code?: string; message?: string; details?: unknown };
@@ -64,12 +78,25 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
 
 	const text = await response.text();
 	let payload: unknown = null;
+	let parsedAsJson = false;
 	if (text) {
 		try {
 			payload = JSON.parse(text);
+			parsedAsJson = true;
 		} catch {
 			payload = text;
 		}
+	}
+
+	// API phải trả JSON. Nếu HTTP OK nhưng body là HTML (SPA fallback, trang lỗi
+	// proxy…) thì caller sẽ parse `undefined` và chết trong im lặng — báo rõ
+	// ngay thay vì để lỗi lan truyền.
+	if (response.ok && text && !parsedAsJson) {
+		throw new ApiError(
+			response.status,
+			'invalid_response',
+			'API trả về nội dung không phải JSON — kiểm tra cấu hình API_BASE (VITE_ALKCLOUD_API_URL).',
+		);
 	}
 
 	if (!response.ok) {
@@ -339,6 +366,41 @@ export async function presignUploadParts(
 	return apiRequest(`/uploads/${encodeURIComponent(uploadSessionId)}/parts`, {
 		method: 'POST',
 		body: { uploadId, partNumbers },
+	});
+}
+
+/**
+ * PUT nội dung part qua API.
+ *
+ * Browser KHÔNG PUT thẳng vào presigned URL của B2: CSP do Cloudflare edge đặt
+ * có thể không khai báo host B2 trong `connect-src` ⇒ fetch bị chặn ⇒
+ * "Failed to fetch". API nhận body rồi chuyển tiếp qua relay tới B2 (2-hop).
+ *
+ * Client KHÔNG gửi presigned URL (bearer credential) — API tự ký target từ
+ * session. Multipart chỉ cần `partNumber` + `uploadId` (không đủ để PUT vào B2
+ * khi thiếu secret key).
+ */
+export async function uploadContent(
+	uploadSessionId: string,
+	params: { partNumber?: number; uploadId?: string },
+	body: Blob,
+	headers: Record<string, string> = {},
+): Promise<Response> {
+	const query = new URLSearchParams();
+	if (params.partNumber !== undefined) query.set('partNumber', String(params.partNumber));
+	if (params.uploadId) query.set('uploadId', params.uploadId);
+	const suffix = query.size > 0 ? `?${query.toString()}` : '';
+	// Dùng **POST** (không phải PUT): `Access-Control-Allow-Methods` ở Cloudflare edge
+	// không có PUT ⇒ Chrome chặn request thật ngay sau preflight (preflight 204 OK nhưng
+	// browser không gửi ⇒ "Failed to fetch"). POST nằm trong allow-list.
+	return fetch(`${API_BASE}/uploads/${encodeURIComponent(uploadSessionId)}/content${suffix}`, {
+		method: 'POST',
+		headers: {
+			...headers,
+			...(csrfToken ? { 'x-alkcloud-csrf': csrfToken } : {}),
+		},
+		body,
+		credentials: 'include',
 	});
 }
 

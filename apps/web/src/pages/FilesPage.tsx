@@ -20,7 +20,7 @@ import {
 	restoreFile,
 	restoreFolder,
 } from '../lib/api.js';
-import { deriveShareVerifier, randomSalt } from '../lib/argon2.js';
+import { deriveShareVerifier, randomSalt } from '../lib/kdf.js';
 import { uploadFiles, type UploadProgress } from '../lib/upload.js';
 
 interface FilesPageProps {

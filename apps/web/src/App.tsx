@@ -24,6 +24,7 @@ export function App() {
 	const [bootstrapped, setBootstrapped] = useState<boolean | null>(null);
 	const [authenticated, setAuthenticated] = useState(false);
 	const [loading, setLoading] = useState(true);
+	const [statusError, setStatusError] = useState<string | null>(null);
 
 	useEffect(() => {
 		const onPopState = () => setRoute(parseRoute());
@@ -48,7 +49,10 @@ export function App() {
 					}
 				}
 			} catch {
-				if (!cancelled) setBootstrapped(false);
+				// KHÔNG coi lỗi mạng là "chưa khởi tạo": owner đã tồn tại thì form
+				// bootstrap là hướng sai ⇒ owner nhập setup token rồi mới biết
+				// là tài khoản đã tồn tại. Phải báo lỗi kết nối thay vì đoán.
+				if (!cancelled) setStatusError('Không kết nối được API. Kiểm tra mạng rồi tải lại trang.');
 			} finally {
 				if (!cancelled) setLoading(false);
 			}
@@ -68,6 +72,19 @@ export function App() {
 
 	if (route.kind === 'share') {
 		return <SharePage token={route.token} />;
+	}
+
+	if (statusError) {
+		return (
+			<main className="center">
+				<p className="error" role="alert">
+					{statusError}
+				</p>
+				<button type="button" onClick={() => window.location.reload()}>
+					Tải lại
+				</button>
+			</main>
+		);
 	}
 
 	if (!authenticated) {

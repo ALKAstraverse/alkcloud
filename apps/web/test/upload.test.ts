@@ -32,12 +32,16 @@ interface PutCall {
 
 interface Harness {
 	puts: PutCall[];
+	/** PUT đi thẳng vào B2 (đường fallback khi API proxy lỗi). */
+	directPuts: string[];
 	completed: Array<{ uploadSessionId: string; parts: Array<{ partNumber: number; etag: string; size: number }>; uploadId?: string }>;
 	aborted: string[];
 	mode: 'single' | 'multipart';
 	partCount: number;
 	partSize: number;
 	failPutAt: number | null;
+	/** Fail mọi PUT (proxy lẫn fallback) — dùng khi cần lỗi xác định (part chạy song song). */
+	failAllPuts: boolean;
 }
 
 function stubApi(harness: Harness): void {
@@ -45,11 +49,19 @@ function stubApi(harness: Harness): void {
 		const href = String(url);
 		const method = init.method ?? 'GET';
 
-		// PUT thẳng lên B2 (URL giả) — không đi qua API.
-		if (method === 'PUT') {
+		// Gửi part: đường chính là API proxy (`POST /uploads/:id/content`),
+		// đường fallback là PUT thẳng vào presigned URL của B2.
+		if (method === 'PUT' || (method === 'POST' && href.includes('/content'))) {
 			const body = init.body as Blob;
 			const size = body.size;
-			harness.puts.push({ url: href, size, etag: `etag-${href}-${harness.puts.length}` });
+			const isProxy = href.includes('/uploads/') && href.includes('/content');
+			const method = (init.method ?? 'GET').toUpperCase();
+			if (isProxy) {
+				harness.puts.push({ url: href, size, etag: `etag-${href}-${harness.puts.length}` });
+			} else {
+				harness.directPuts.push(href);
+			}
+			if (harness.failAllPuts) return new Response('boom', { status: 500 });
 			if (harness.failPutAt !== null && harness.puts.length === harness.failPutAt) {
 				return new Response('boom', { status: 500 });
 			}
@@ -132,12 +144,14 @@ function stubApi(harness: Harness): void {
 function makeHarness(overrides: Partial<Harness> = {}): Harness {
 	return {
 		puts: [],
+		directPuts: [],
 		completed: [],
 		aborted: [],
 		mode: 'single',
 		partCount: 1,
 		partSize: 1024,
 		failPutAt: null,
+		failAllPuts: false,
 		...overrides,
 	};
 }
@@ -224,15 +238,40 @@ describe('WS-I — upload multipart', () => {
 
 describe('WS-I — xử lý lỗi upload', () => {
 	it('PUT thất bại ⇒ ném lỗi VÀ gọi abort (không để treo multipart)', async () => {
-		const harness = makeHarness({ mode: 'multipart', partCount: 2, partSize: 1000, failPutAt: 1 });
+		const harness = makeHarness({ mode: 'multipart', partCount: 2, partSize: 1000, failAllPuts: true });
 		stubApi(harness);
 		await assert.rejects(() => uploadFile(new File([new Uint8Array(1500)], 'big.bin')));
 		assert.equal(harness.aborted.length, 1, 'phải gọi abort 1 lần');
 		assert.equal(harness.completed.length, 0, 'không được complete');
 	});
 
+	it('API proxy lỗi ⇒ thử lại PUT thẳng B2 (fallback)', async () => {
+		const harness = makeHarness({ mode: 'single' });
+		stubApi(harness);
+		// Chỉ đường API proxy lỗi; đường trực tiếp tới B2 vẫn được thử.
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (url: string | URL, init: RequestInit = {}) => {
+			const href = String(url);
+			const method = (init.method ?? 'GET').toUpperCase();
+			if (method === 'POST' && href.includes('/uploads/') && href.includes('/content')) {
+				return new Response('proxy down', { status: 503 });
+			}
+			return originalFetch(url, init);
+		}) as typeof fetch;
+		const result = await uploadFile(new File([new Uint8Array(64)], 'a.bin'));
+		assert.equal(result.id, 'fil_1', 'upload phải thành công qua đường fallback');
+		assert.equal(harness.directPuts.length, 1, 'phải có 1 PUT thẳng B2');
+	});
+
+	it('cả 2 đường đều lỗi ⇒ ném lỗi', async () => {
+		const harness = makeHarness({ mode: 'single' });
+		stubApi(harness);
+		globalThis.fetch = (async () => new Response('down', { status: 503 })) as typeof fetch;
+		await assert.rejects(() => uploadFile(new File([new Uint8Array(8)], 'a.bin')));
+	});
+
 	it('lỗi single-part không gọi abort (không có multipart)', async () => {
-		const harness = makeHarness({ mode: 'single', failPutAt: 1 });
+		const harness = makeHarness({ mode: 'single', failAllPuts: true });
 		stubApi(harness);
 		await assert.rejects(() => uploadFile(new File([new Uint8Array(10)], 'a.bin')));
 		assert.equal(harness.aborted.length, 0);

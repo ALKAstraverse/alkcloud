@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
+import { pbkdf2Sync } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
 	AUTH_KEY_LENGTH,
-	DEFAULT_ARGON2_PARAMS,
+	DEFAULT_KDF_PARAMS,
 	SHARE_VERIFIER_CONTEXT,
 	base64UrlToBytes,
 	bytesToBase64Url,
+	deriveAuthKey,
 	deriveShareVerifier,
-	parseArgon2Params,
+	parseKdfParams,
 	randomSalt,
-} from '../src/lib/argon2.js';
+} from '../src/lib/kdf.js';
 
 /**
  * WS-I — kiểm thử logic client.
@@ -21,9 +23,11 @@ import {
  *   - base64url phải round-trip đúng (salt dùng chung giữa lúc đăng ký và lúc
  *     đăng nhập).
  *   - salt phải NGẪU NHIÊN (2 lần gọi khác nhau).
+ *   - `authKey` phải KHỚP chuẩn PBKDF2-HMAC-SHA256 (so với `node:crypto`) —
+ *     server chỉ so sánh `SHA-256(authKey + pepper)` nên lệch 1 byte là hỏng.
  */
 
-describe('WS-I — argon2 helpers', () => {
+describe('WS-I — KDF helpers', () => {
 	it('base64url round-trip đúng với byte ngẫu nhiên', () => {
 		for (const length of [1, 16, 32, 64]) {
 			const bytes = new Uint8Array(length);
@@ -48,19 +52,52 @@ describe('WS-I — argon2 helpers', () => {
 		assert.equal(bytesToBase64Url(new Uint8Array(32)).length, AUTH_KEY_LENGTH);
 	});
 
-	it('parseArgon2Params: thiếu/thắm JSON ⇒ dùng mặc định', () => {
-		assert.deepEqual(parseArgon2Params(null), DEFAULT_ARGON2_PARAMS);
-		assert.deepEqual(parseArgon2Params(''), DEFAULT_ARGON2_PARAMS);
-		assert.deepEqual(parseArgon2Params('{không phải JSON'), DEFAULT_ARGON2_PARAMS);
-		assert.deepEqual(parseArgon2Params('{}'), DEFAULT_ARGON2_PARAMS);
+	it('parseKdfParams: thiếu/hỏng JSON ⇒ dùng mặc định', () => {
+		assert.deepEqual(parseKdfParams(null), DEFAULT_KDF_PARAMS);
+		assert.deepEqual(parseKdfParams(''), DEFAULT_KDF_PARAMS);
+		assert.deepEqual(parseKdfParams('{không phải JSON'), DEFAULT_KDF_PARAMS);
+		assert.deepEqual(parseKdfParams('{}'), DEFAULT_KDF_PARAMS);
 	});
 
-	it('parseArgon2Params: đọc được giá trị hợp lệ', () => {
-		const parsed = parseArgon2Params(JSON.stringify({ memorySize: 1024, iterations: 3 }));
-		assert.equal(parsed.memorySize, 1024);
-		assert.equal(parsed.iterations, 3);
-		assert.equal(parsed.parallelism, DEFAULT_ARGON2_PARAMS.parallelism);
-		assert.equal(parsed.outputLength, DEFAULT_ARGON2_PARAMS.outputLength);
+	it('parseKdfParams: đọc được giá trị hợp lệ', () => {
+		const parsed = parseKdfParams(
+			JSON.stringify({ algo: 'pbkdf2', hash: 'sha-256', iterations: 210_000, outputLength: 32 }),
+		);
+		assert.equal(parsed.algo, 'pbkdf2');
+		assert.equal(parsed.iterations, 210_000);
+		assert.equal(parsed.outputLength, 32);
+	});
+
+	it('parseKdfParams: kẹp iterations vào dải an toàn', () => {
+		assert.equal(parseKdfParams(JSON.stringify({ algo: 'pbkdf2', iterations: 1 })).iterations, 100_000);
+		assert.equal(parseKdfParams(JSON.stringify({ algo: 'pbkdf2', iterations: 99_999_999 })).iterations, 2_000_000);
+	});
+
+	it('parseKdfParams: tham số Argon2 cũ ⇒ ném lỗi rõ ràng (không derive sai)', () => {
+		assert.throws(
+			() => parseKdfParams(JSON.stringify({ memorySize: 19_456, iterations: 2 })),
+			/thuật toán băm cũ/,
+		);
+	});
+
+	it('deriveAuthKey: khớp chuẩn PBKDF2-HMAC-SHA256 (node:crypto làm chuẩn)', async () => {
+		const salt = randomSalt();
+		const password = 'mật khẩu thử nghiệm';
+		const derived = await deriveAuthKey(password, salt, {
+			...DEFAULT_KDF_PARAMS,
+			iterations: 10_000,
+		});
+		const expected = pbkdf2Sync(password, base64UrlToBytes(salt), 10_000, 32, 'sha256');
+		assert.equal(derived.authKey, bytesToBase64Url(new Uint8Array(expected)));
+		assert.equal(derived.authKey.length, AUTH_KEY_LENGTH);
+		assert.equal(derived.authVerifierSalt, salt);
+	});
+
+	it('deriveAuthKey: tất định — cùng mật khẩu + salt ⇒ cùng authKey', async () => {
+		const salt = randomSalt();
+		const first = await deriveAuthKey('abc', salt, { ...DEFAULT_KDF_PARAMS, iterations: 10_000 });
+		const second = await deriveAuthKey('abc', salt, { ...DEFAULT_KDF_PARAMS, iterations: 10_000 });
+		assert.equal(first.authKey, second.authKey);
 	});
 });
 

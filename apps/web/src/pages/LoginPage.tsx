@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { ApiError, bootstrap, getAuthParams, login, recoveryLogin } from '../lib/api.js';
-import { deriveAuthKey, parseArgon2Params, randomSalt } from '../lib/argon2.js';
+import { bootstrap, getAuthParams, login, recoveryLogin } from '../lib/api.js';
+import { deriveAuthKey, parseKdfParams, randomSalt } from '../lib/kdf.js';
 
 interface LoginPageProps {
 	bootstrapped: boolean;
@@ -27,7 +27,7 @@ export function LoginPage({ bootstrapped, onAuthenticated }: LoginPageProps) {
 			if (mode === 'password') {
 				// Salt/params phải khớp lúc đăng ký → lấy từ server.
 				const stored = await getAuthParams();
-				const derived = await deriveAuthKey(password, stored.salt, parseArgon2Params(stored.params));
+				const derived = await deriveAuthKey(password, stored.salt, parseKdfParams(stored.params));
 				await login(email, derived.authKey);
 				onAuthenticated();
 			} else if (mode === 'recovery') {
@@ -47,7 +47,7 @@ export function LoginPage({ bootstrapped, onAuthenticated }: LoginPageProps) {
 				onAuthenticated();
 			}
 		} catch (caught) {
-			setError(caught instanceof ApiError ? caught.message : 'Có lỗi xảy ra');
+			setError(caught instanceof Error ? caught.message : 'Có lỗi xảy ra');
 		} finally {
 			setBusy(false);
 		}
@@ -167,8 +167,9 @@ export function LoginPage({ bootstrapped, onAuthenticated }: LoginPageProps) {
 				)}
 
 				<p className="muted small">
-					Mật khẩu được băm Argon2id ngay trong trình duyệt; server chỉ nhận giá trị đã băm.
+					Mật khẩu được băm PBKDF2 ngay trong trình duyệt; server chỉ nhận giá trị đã băm.
 				</p>
+				<p className="muted small">build {__BUILD_ID__}</p>
 			</section>
 		</main>
 	);
