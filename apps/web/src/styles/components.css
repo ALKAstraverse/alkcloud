@@ -681,6 +681,37 @@
 	background: var(--border);
 }
 
+.menu__divider {
+	height: 1px;
+	margin: var(--space-2) calc(var(--space-2) * -1);
+	background: var(--border);
+}
+
+.menu__item > span {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.menu__check {
+	width: 14px;
+	height: 14px;
+	flex: none !important;
+	color: var(--accent) !important;
+}
+
+/* Menu ngữ cảnh (chuột phải) — dùng chung style với .menu */
+.context-menu {
+	position: fixed;
+	z-index: var(--z-overlay);
+	padding: var(--space-2);
+	background: var(--surface-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-lg);
+	animation: menu-in var(--dur-fast) var(--ease-out);
+	transform-origin: top left;
+}
+
 .menu__label {
 	padding: var(--space-3) var(--space-5) var(--space-2);
 	font-size: var(--text-xs);

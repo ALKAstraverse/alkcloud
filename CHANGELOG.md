@@ -7,8 +7,8 @@
 
 ## [Unreleased] — Phase 7 (14/11/2026) — DEPLOY WEB (REDESIGN UI/UX)
 
-> Trạng thái: **WEB ĐÃ DEPLOY PRODUCTION**. Worker `alkcloud-web` version `0720bb97-594e-4849-9bd2-8f6ce0c4c05a`;
-> `/` → 307 → `/app/CYQ1dFSx/`; E2E production `PASS=21 · FAIL=0`; `check-production-health` PASS.
+> Trạng thái: **WEB ĐÃ DEPLOY PRODUCTION**. Worker `alkcloud-web` version `65372961-34f3-4af0-a9ad-3987c520b7e1` (14/11 15:00 UTC — Phase 7.2);
+> `/` → 307 → `/app/FvyLZVnF/`; E2E production `PASS=21 · FAIL=0`; `check-production-health` PASS.
 > Bằng chứng: `docs/34-PRODUCTION-DEPLOYMENT-REPORT.md` §14–§17 · `docs/42-UI-UX-REDESIGN.md` · `docs/44-VISUAL-QA-REPORT.md`.
 
 ### Added
@@ -16,6 +16,7 @@
 | Hạng mục | Nội dung | Tài liệu |
 | :--- | :--- | :--- |
 | **Redesign UI/UX toàn diện** | Design system (token light/dark, typography, component, breakpoint), file manager mới (grid/list, multi-select + bulk bar, sort, breadcrumb, drag&drop, upload queue tuần tự), trang Thùng rác, trang Cài đặt 4 mục, login 3 chế độ + recovery codes | `docs/42`, `docs/43` |
+| **Danh sách kiểu Google Drive / Nextcloud (P7.2)** | Bảng cột Tên / Sửa đổi / Kích thước (mặc định list), sort bằng click tiêu đề cột + đảo chiều, menu chuột phải (`ContextMenu.tsx`), click = chọn / bấm đúp = mở / Enter = mở, bộ đếm "N thư mục · M tệp", meta gộp cho mobile | `docs/42` §7, `docs/34` §16c |
 | **Font tự host** | Inter (SIL OFL 1.1) — 3 file `woff2` + `OFL.txt`; không gọi font bên thứ ba | `docs/43` |
 | **Helper KDF cho script Node** | `scripts/lib/auth-key.ts` — PBKDF2 theo `params` server trả (fallback Argon2id cho tài khoản cũ) | `docs/34` §16 |
 
@@ -36,7 +37,7 @@
 
 | Hạng mục | Nội dung | Tài liệu |
 | :--- | :--- | :--- |
-| **Bundle web** | `index-CYQ1dFSx.js` 357.84 kB (gzip **109.49 kB**), `index-D7KVtLYF.css` 50.69 kB (gzip 9.56 kB), `react-DbHEDQBy.js` 11.72 kB | `docs/14` §1 |
+| **Bundle web** | P7.2: `index-FvyLZVnF.js` 362.55 kB (gzip **110.96 kB**), `index-CD7g8GN7.css` 55.30 kB (gzip 10.19 kB), `react-DbHEDQBy.js` 11.72 kB | `docs/14` §1 |
 
 ---
 

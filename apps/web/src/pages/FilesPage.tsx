@@ -27,8 +27,9 @@ import {
 import { deriveShareVerifier, randomSalt } from '../lib/kdf.js';
 import { uploadFiles, uniqueFileName } from '../lib/upload.js';
 import { Button, IconButton } from '../components/Button.js';
+import { ContextMenu } from '../components/ContextMenu.js';
 import { Icon } from '../components/Icon.js';
-import { Menu } from '../components/Menu.js';
+import { Menu, type MenuItem } from '../components/Menu.js';
 import { useToast } from '../components/Toast.js';
 import { EmptyState, ErrorState, InlineNotice, SkeletonRows } from '../components/States.js';
 import { UploadPanel, type UploadQueueItem } from '../components/UploadPanel.js';
@@ -61,6 +62,14 @@ interface Target {
 	name: string;
 }
 
+/** Mục dùng chung cho bộ so sánh khi sắp xếp (thư mục không có `size`/`updatedAt`). */
+interface SortableItem {
+	name: string;
+	createdAt: string;
+	updatedAt?: string | null;
+	size?: number;
+}
+
 type DialogState =
 	| { kind: 'none' }
 	| { kind: 'new-folder' }
@@ -71,12 +80,16 @@ type DialogState =
 	| { kind: 'purge'; target: Target };
 
 type SortKey = 'name' | 'modified' | 'size';
+type SortDir = 'asc' | 'desc';
 
 const PROXY_DOWNLOAD_LIMIT = 100 * 1024 * 1024;
 const LAYOUT_KEY = 'alkcloud.layout';
 const SORT_KEY = 'alkcloud.sort';
+const SORT_DIR_KEY = 'alkcloud.sortDir';
 /** Số file upload chạy song song — giống Nextcloud (tải tuần tự rất chậm khi nhiều file). */
 const MAX_PARALLEL_UPLOADS = 3;
+/** Chiều mặc định của từng kiểu sắp xếp (giống Google Drive). */
+const SORT_DEFAULT_DIR: Record<SortKey, SortDir> = { name: 'asc', modified: 'desc', size: 'desc' };
 
 function readStored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
 	try {
@@ -118,8 +131,11 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 
 	const [searchInput, setSearchInput] = useState('');
 	const [query, setQuery] = useState('');
-	const [layout, setLayout] = useState<'grid' | 'list'>(() => readStored(LAYOUT_KEY, ['grid', 'list'], 'grid'));
+	// Mặc định dạng danh sách (bảng cột như Nextcloud) — lưới vẫn chọn được
+	// qua nút chuyển dạng ở thanh công cụ.
+	const [layout, setLayout] = useState<'grid' | 'list'>(() => readStored(LAYOUT_KEY, ['grid', 'list'], 'list'));
 	const [sort, setSort] = useState<SortKey>(() => readStored(SORT_KEY, ['name', 'modified', 'size'], 'name'));
+	const [sortDir, setSortDir] = useState<SortDir>(() => readStored(SORT_DIR_KEY, ['asc', 'desc'], 'asc'));
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 
 	const [loading, setLoading] = useState(true);
@@ -129,6 +145,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 	const [dragging, setDragging] = useState(false);
 
 	const [dialog, setDialog] = useState<DialogState>({ kind: 'none' });
+	const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: Target } | null>(null);
 	const [queue, setQueue] = useState<UploadQueueItem[]>([]);
 	const [queueOpen, setQueueOpen] = useState(true);
 
@@ -199,22 +216,49 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 		return Math.min(100, ((usage.usedBytes + usage.reservedBytes) / usage.quotaBytes) * 100);
 	}, [usage]);
 
+	/**
+	 * Đổi kiểu sắp xếp: bấm cột khác ⇒ dùng chiều mặc định của cột đó;
+	 * bấm lại cùng cột ⇒ đảo chiều (tăng dần / giảm dần).
+	 */
+	const applySort = useCallback(
+		(key: SortKey) => {
+			if (sort === key) {
+				const next: SortDir = sortDir === 'asc' ? 'desc' : 'asc';
+				setSortDir(next);
+				store(SORT_DIR_KEY, next);
+				return;
+			}
+			setSort(key);
+			store(SORT_KEY, key);
+			const next = SORT_DEFAULT_DIR[key];
+			setSortDir(next);
+			store(SORT_DIR_KEY, next);
+		},
+		[sort, sortDir],
+	);
+
+	const compareBy = (a: SortableItem, b: SortableItem): number => {
+		let result = 0;
+		if (sort === 'size') result = (a.size ?? 0) - (b.size ?? 0);
+		else if (sort === 'modified') {
+			result = (a.updatedAt ?? a.createdAt).localeCompare(b.updatedAt ?? b.createdAt);
+		} else result = a.name.localeCompare(b.name, 'vi');
+		return sortDir === 'asc' ? result : -result;
+	};
+
 	const sortedFolders = useMemo(() => {
 		const list = [...folders];
-		list.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
-		if (sort === 'modified') list.reverse();
+		list.sort(compareBy);
 		return list;
-	}, [folders, sort]);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [folders, sort, sortDir]);
 
 	const sortedFiles = useMemo(() => {
 		const list = [...files];
-		list.sort((a, b) => {
-			if (sort === 'size') return b.size - a.size;
-			if (sort === 'modified') return b.updatedAt.localeCompare(a.updatedAt);
-			return a.name.localeCompare(b.name, 'vi');
-		});
+		list.sort(compareBy);
 		return list;
-	}, [files, sort]);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [files, sort, sortDir]);
 
 	const totalItems = sortedFolders.length + sortedFiles.length;
 	const trashTotal = trashFolders.length + trashFiles.length;
@@ -291,6 +335,89 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 		for (const file of sortedFiles) next.add(`file:${file.id}`);
 		setSelected(next);
 	};
+
+	// ------------------------------------------------------- context menu
+	const folderActions = useCallback(
+		(folder: FolderEntry): MenuItem[] => [
+			{
+				id: 'open',
+				label: 'Mở thư mục',
+				icon: 'folderOpen',
+				onSelect: () => enterFolder(folder),
+			},
+			{
+				id: 'rename',
+				label: 'Đổi tên',
+				icon: 'pen',
+				onSelect: () => setDialog({ kind: 'rename', target: { type: 'folder', id: folder.id, name: folder.name } }),
+			},
+			{
+				id: 'move',
+				label: 'Di chuyển',
+				icon: 'move',
+				onSelect: () => setDialog({ kind: 'move', target: { type: 'folder', id: folder.id, name: folder.name } }),
+			},
+			{
+				id: 'delete',
+				label: 'Xoá',
+				icon: 'trashCan',
+				danger: true,
+				onSelect: () => setDialog({ kind: 'delete', targets: [{ type: 'folder', id: folder.id, name: folder.name }] }),
+			},
+		],
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[],
+	);
+
+	const fileActions = useCallback(
+		(file: FileEntry): MenuItem[] => [
+			{ id: 'download', label: 'Tải xuống', icon: 'download', onSelect: () => void openFile(file) },
+			{
+				id: 'share',
+				label: 'Chia sẻ',
+				icon: 'shareNodes',
+				onSelect: () => setDialog({ kind: 'share', fileId: file.id, name: file.name }),
+			},
+			{
+				id: 'rename',
+				label: 'Đổi tên',
+				icon: 'pen',
+				onSelect: () => setDialog({ kind: 'rename', target: { type: 'file', id: file.id, name: file.name } }),
+			},
+			{
+				id: 'move',
+				label: 'Di chuyển',
+				icon: 'move',
+				onSelect: () => setDialog({ kind: 'move', target: { type: 'file', id: file.id, name: file.name } }),
+			},
+			{
+				id: 'delete',
+				label: 'Xoá',
+				icon: 'trashCan',
+				danger: true,
+				onSelect: () => setDialog({ kind: 'delete', targets: [{ type: 'file', id: file.id, name: file.name }] }),
+			},
+		],
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[],
+	);
+
+	const openContextMenu = (event: React.MouseEvent, target: Target) => {
+		event.preventDefault();
+		event.stopPropagation();
+		setContextMenu({ x: event.clientX, y: event.clientY, target });
+	};
+
+	const contextMenuItems = useMemo((): MenuItem[] => {
+		if (!contextMenu) return [];
+		const { type, id, name } = contextMenu.target;
+		if (type === 'folder') {
+			const folder = folders.find((item) => item.id === id);
+			return folder ? folderActions(folder) : [];
+		}
+		const file = files.find((item) => item.id === id);
+		return file ? fileActions(file) : [];
+	}, [contextMenu, folders, files, folderActions, fileActions]);
 
 	// ------------------------------------------------------------- mutations
 	const runMutation = async (action: () => Promise<void>, success: string, fallback: string) => {
@@ -704,6 +831,9 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 											>
 												Tải lên
 											</Button>
+											<span className="toolbar__count">
+												{sortedFolders.length} thư mục · {sortedFiles.length} tệp
+											</span>
 											<input
 												ref={fileInput}
 												type="file"
@@ -755,49 +885,65 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 													<Icon name="list" />
 												</button>
 											</div>
-											<Menu
-												label="Sắp xếp"
-												trigger={({ toggle }) => (
-													<button
-														type="button"
-														className="btn btn--secondary btn--sm"
-														onClick={toggle}
-														aria-label="Sắp xếp"
-													>
-														<Icon name="sort" />
-														{sort === 'name' ? 'Tên' : sort === 'modified' ? 'Mới sửa' : 'Kích thước'}
-													</button>
-												)}
-												items={[
-													{
-														id: 'name',
-														label: 'Theo tên',
-														icon: 'check',
-														onSelect: () => {
-															setSort('name');
-															store(SORT_KEY, 'name');
-														},
+										<Menu
+											label="Sắp xếp"
+											trigger={({ toggle }) => (
+												<button
+													type="button"
+													className="btn btn--secondary btn--sm"
+													onClick={toggle}
+													aria-label="Sắp xếp"
+												>
+													<Icon name="sort" />
+													{sort === 'name' ? 'Tên' : sort === 'modified' ? 'Mới sửa' : 'Kích thước'}
+													<Icon name={sortDir === 'asc' ? 'chevronUp' : 'chevronDown'} />
+												</button>
+											)}
+											items={[
+												{
+													id: 'name',
+													label: 'Theo tên',
+													icon: 'list',
+													checked: sort === 'name',
+													onSelect: () => applySort('name'),
+												},
+												{
+													id: 'modified',
+													label: 'Mới sửa gần đây',
+													icon: 'clock',
+													checked: sort === 'modified',
+													onSelect: () => applySort('modified'),
+												},
+												{
+													id: 'size',
+													label: 'Kích thước',
+													icon: 'hardDrive',
+													checked: sort === 'size',
+													onSelect: () => applySort('size'),
+												},
+												{ id: 'divider', label: '', divider: true, onSelect: () => {} },
+												{
+													id: 'asc',
+													label: 'Tăng dần',
+													icon: 'chevronUp',
+													checked: sortDir === 'asc',
+													onSelect: () => {
+														setSortDir('asc');
+														store(SORT_DIR_KEY, 'asc');
 													},
-													{
-														id: 'modified',
-														label: 'Mới sửa gần đây',
-														icon: 'clock',
-														onSelect: () => {
-															setSort('modified');
-															store(SORT_KEY, 'modified');
-														},
+												},
+												{
+													id: 'desc',
+													label: 'Giảm dần',
+													icon: 'chevronDown',
+													checked: sortDir === 'desc',
+													onSelect: () => {
+														setSortDir('desc');
+														store(SORT_DIR_KEY, 'desc');
 													},
-													{
-														id: 'size',
-														label: 'Kích thước lớn trước',
-														icon: 'hardDrive',
-														onSelect: () => {
-															setSort('size');
-															store(SORT_KEY, 'size');
-														},
-													},
-												]}
-											/>
+												},
+											]}
+										/>
 										</div>
 										<IconButton
 											icon="arrowRotateRight"
@@ -943,9 +1089,9 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 											) : null}
 										</>
 									) : (
-										<div className="file-list">
-											<div className="file-list__row file-list__head" aria-hidden="true">
-												<label className="checkbox" style={{ justifyContent: 'center' }}>
+										<div className="drive">
+											<div className="drive__head" role="row">
+												<label className="checkbox drive__check">
 													<input
 														type="checkbox"
 														checked={allSelected}
@@ -953,24 +1099,64 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														onChange={toggleSelectAll}
 													/>
 												</label>
-												<span>Tên</span>
-												<span style={{ textAlign: 'right' }}>Kích thước</span>
-												<span>Sửa gần đây</span>
-												<span />
+												<button
+													type="button"
+													className="drive__sort"
+													data-active={sort === 'name'}
+													onClick={() => applySort('name')}
+												>
+													<span>Tên</span>
+													{sort === 'name' ? (
+														<Icon name={sortDir === 'asc' ? 'chevronUp' : 'chevronDown'} className="drive__sort-icon" />
+													) : null}
+												</button>
+												<button
+													type="button"
+													className="drive__sort"
+													data-active={sort === 'modified'}
+													onClick={() => applySort('modified')}
+												>
+													<span>Sửa đổi</span>
+													{sort === 'modified' ? (
+														<Icon name={sortDir === 'asc' ? 'chevronUp' : 'chevronDown'} className="drive__sort-icon" />
+													) : null}
+												</button>
+												<button
+													type="button"
+													className="drive__sort drive__sort--right"
+													data-active={sort === 'size'}
+													onClick={() => applySort('size')}
+												>
+													<span>Kích thước</span>
+													{sort === 'size' ? (
+														<Icon name={sortDir === 'asc' ? 'chevronUp' : 'chevronDown'} className="drive__sort-icon" />
+													) : null}
+												</button>
+												<span className="drive__head-tail" />
 											</div>
-											{sortedFolders.length > 0 ? (
-												<div className="manager__section-head" style={{ padding: 'var(--space-4) var(--space-5) 0' }}>
-													<span className="manager__section-title">Thư mục</span>
-													<span className="manager__section-count">{sortedFolders.length}</span>
-												</div>
-											) : null}
 											{sortedFolders.map((folder) => (
 												<div
 													key={folder.id}
-													className="file-list__row"
+													className="drive__row"
+													role="row"
+													tabIndex={0}
 													data-selected={selected.has(`folder:${folder.id}`)}
+													onClick={() => toggleSelect('folder', folder.id)}
+													onDoubleClick={(event) => {
+														event.stopPropagation();
+														enterFolder(folder);
+													}}
+													onKeyDown={(event) => {
+														if (event.key === 'Enter') {
+															event.preventDefault();
+															enterFolder(folder);
+														}
+													}}
+													onContextMenu={(event) =>
+														openContextMenu(event, { type: 'folder', id: folder.id, name: folder.name })
+													}
 												>
-													<label className="checkbox" style={{ justifyContent: 'center' }}>
+													<label className="checkbox drive__check" onClick={(event) => event.stopPropagation()}>
 														<input
 															type="checkbox"
 															checked={selected.has(`folder:${folder.id}`)}
@@ -978,73 +1164,56 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 															onChange={() => toggleSelect('folder', folder.id)}
 														/>
 													</label>
-													<button
-														type="button"
-														className="file-list__name"
-														style={{ background: 'none', border: 0, padding: 0, textAlign: 'left', cursor: 'pointer', color: 'inherit' }}
-														onClick={() => enterFolder(folder)}
-													>
-														<span className="file-list__icon tone-folder">
+													<span className="drive__name" title="Bấm đúp để mở thư mục">
+														<span className="drive__icon tone-folder">
 															<Icon name="folder" />
 														</span>
-														<span className="file-list__text">
-															<span className="file-list__title truncate">{folder.name}</span>
-															<span className="file-list__meta">Thư mục</span>
+														<span className="drive__text">
+															<span className="drive__title truncate">{folder.name}</span>
+															<span className="drive__subtitle truncate">Thư mục</span>
+															<span className="drive__mobile-meta truncate">
+																Thư mục · {formatRelative(folder.createdAt)}
+															</span>
 														</span>
-													</button>
-													<span className="file-list__meta" style={{ textAlign: 'right' }}>
-														—
 													</span>
-													<span className="file-list__meta">{formatRelative(folder.createdAt)}</span>
-													<div className="file-list__actions">
+													<span className="drive__cell drive__cell--modified">{formatRelative(folder.createdAt)}</span>
+													<span className="drive__cell drive__cell--size">—</span>
+													<div className="drive__actions" onClick={(event) => event.stopPropagation()}>
 														<Menu
 															label={`Thao tác cho ${folder.name}`}
 															trigger={({ toggle }) => (
 																<IconButton icon="ellipsis" label="Thao tác" size="sm" onClick={toggle} />
 															)}
-															items={[
-																{
-																	id: 'rename',
-																	label: 'Đổi tên',
-																	icon: 'pen',
-																	onSelect: () =>
-																		setDialog({ kind: 'rename', target: { type: 'folder', id: folder.id, name: folder.name } }),
-																},
-																{
-																	id: 'move',
-																	label: 'Di chuyển',
-																	icon: 'move',
-																	onSelect: () =>
-																		setDialog({ kind: 'move', target: { type: 'folder', id: folder.id, name: folder.name } }),
-																},
-																{
-																	id: 'delete',
-																	label: 'Xoá',
-																	icon: 'trashCan',
-																	danger: true,
-																	onSelect: () =>
-																		setDialog({ kind: 'delete', targets: [{ type: 'folder', id: folder.id, name: folder.name }] }),
-																},
-															]}
+															items={folderActions(folder)}
 														/>
 													</div>
 												</div>
 											))}
-											{sortedFiles.length > 0 ? (
-												<div className="manager__section-head" style={{ padding: 'var(--space-4) var(--space-5) 0' }}>
-													<span className="manager__section-title">Tệp</span>
-													<span className="manager__section-count">{sortedFiles.length}</span>
-												</div>
-											) : null}
 											{sortedFiles.map((file) => {
 												const kind = fileKind(file.name, file.contentType);
 												return (
 													<div
 														key={file.id}
-														className="file-list__row"
+														className="drive__row"
+														role="row"
+														tabIndex={0}
 														data-selected={selected.has(`file:${file.id}`)}
+														onClick={() => toggleSelect('file', file.id)}
+														onDoubleClick={(event) => {
+															event.stopPropagation();
+															void openFile(file);
+														}}
+														onKeyDown={(event) => {
+															if (event.key === 'Enter') {
+																event.preventDefault();
+																void openFile(file);
+															}
+														}}
+														onContextMenu={(event) =>
+															openContextMenu(event, { type: 'file', id: file.id, name: file.name })
+														}
 													>
-														<label className="checkbox" style={{ justifyContent: 'center' }}>
+														<label className="checkbox drive__check" onClick={(event) => event.stopPropagation()}>
 															<input
 																type="checkbox"
 																checked={selected.has(`file:${file.id}`)}
@@ -1052,61 +1221,27 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 																onChange={() => toggleSelect('file', file.id)}
 															/>
 														</label>
-														<button
-															type="button"
-															className="file-list__name"
-															style={{ background: 'none', border: 0, padding: 0, textAlign: 'left', cursor: 'pointer', color: 'inherit' }}
-															onClick={() => void openFile(file)}
-														>
-															<span className={`file-list__icon ${kind.tone}`}>
+														<span className="drive__name" title="Bấm đúp để tải xuống">
+															<span className={`drive__icon ${kind.tone}`}>
 																<Icon name={kind.icon} />
 															</span>
-															<span className="file-list__text">
-																<span className="file-list__title truncate">{file.name}</span>
-																<span className="file-list__meta">{kind.label}</span>
+															<span className="drive__text">
+																<span className="drive__title truncate">{file.name}</span>
+																<span className="drive__subtitle truncate">{kind.label}</span>
+																<span className="drive__mobile-meta truncate">
+																	{kind.label} · {formatBytes(file.size)} · {formatRelative(file.updatedAt)}
+																</span>
 															</span>
-														</button>
-														<span className="file-list__meta" style={{ textAlign: 'right' }}>
-															{formatBytes(file.size)}
 														</span>
-														<span className="file-list__meta">{formatRelative(file.updatedAt)}</span>
-														<div className="file-list__actions">
+														<span className="drive__cell drive__cell--modified">{formatRelative(file.updatedAt)}</span>
+														<span className="drive__cell drive__cell--size">{formatBytes(file.size)}</span>
+														<div className="drive__actions" onClick={(event) => event.stopPropagation()}>
 															<Menu
 																label={`Thao tác cho ${file.name}`}
 																trigger={({ toggle }) => (
 																	<IconButton icon="ellipsis" label="Thao tác" size="sm" onClick={toggle} />
 																)}
-																items={[
-																	{ id: 'download', label: 'Tải xuống', icon: 'download', onSelect: () => void openFile(file) },
-																	{
-																		id: 'share',
-																		label: 'Chia sẻ',
-																		icon: 'shareNodes',
-																		onSelect: () => setDialog({ kind: 'share', fileId: file.id, name: file.name }),
-																	},
-																	{
-																		id: 'rename',
-																		label: 'Đổi tên',
-																		icon: 'pen',
-																		onSelect: () =>
-																			setDialog({ kind: 'rename', target: { type: 'file', id: file.id, name: file.name } }),
-																	},
-																	{
-																		id: 'move',
-																		label: 'Di chuyển',
-																		icon: 'move',
-																		onSelect: () =>
-																			setDialog({ kind: 'move', target: { type: 'file', id: file.id, name: file.name } }),
-																	},
-																	{
-																		id: 'delete',
-																		label: 'Xoá',
-																		icon: 'trashCan',
-																		danger: true,
-																		onSelect: () =>
-																			setDialog({ kind: 'delete', targets: [{ type: 'file', id: file.id, name: file.name }] }),
-																	},
-																]}
+																items={fileActions(file)}
 															/>
 														</div>
 													</div>
@@ -1277,6 +1412,16 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 				</button>
 			) : null}
 
+			{contextMenu && contextMenuItems.length > 0 ? (
+				<ContextMenu
+					x={contextMenu.x}
+					y={contextMenu.y}
+					label={`Thao tác cho ${contextMenu.target.name}`}
+					items={contextMenuItems}
+					onClose={() => setContextMenu(null)}
+				/>
+			) : null}
+
 			<NewFolderDialog
 				open={dialog.kind === 'new-folder'}
 				onClose={() => setDialog({ kind: 'none' })}
@@ -1340,8 +1485,24 @@ function FolderCard({
 	menuItems: React.ComponentProps<typeof Menu>['items'];
 }) {
 	return (
-		<article className="file-card" data-selected={selected}>
-			<div className="file-card__actions">
+		<article
+			className="file-card"
+			data-selected={selected}
+			tabIndex={0}
+			onClick={onToggle}
+			onDoubleClick={(event) => {
+				event.stopPropagation();
+				onOpen();
+			}}
+			onKeyDown={(event) => {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					onOpen();
+				}
+			}}
+			title="Bấm đúp để mở thư mục"
+		>
+			<div className="file-card__actions" onClick={(event) => event.stopPropagation()}>
 				<Menu
 					label={`Thao tác cho ${folder.name}`}
 					trigger={({ toggle }) => <IconButton icon="ellipsis" label="Thao tác" size="sm" onClick={toggle} />}
@@ -1349,7 +1510,7 @@ function FolderCard({
 				/>
 			</div>
 			<div className="file-card__top">
-				<label className="file-card__check">
+				<label className="file-card__check" onClick={(event) => event.stopPropagation()}>
 					<input
 						type="checkbox"
 						checked={selected}
@@ -1357,15 +1518,17 @@ function FolderCard({
 						onChange={onToggle}
 					/>
 				</label>
-				<button type="button" className="file-card__open" onClick={onOpen} aria-label={`Mở thư mục ${folder.name}`}>
-					<span className="file-card__icon tone-folder">
-						<Icon name="folder" />
+				<div className="file-card__open">
+					<span className="file-card__preview tone-folder">
+						<span className="file-card__icon tone-folder">
+							<Icon name="folder" />
+						</span>
 					</span>
 					<span className="file-card__name clamp-2" title={folder.name}>
 						{folder.name}
 					</span>
 					<span className="file-card__meta">Thư mục · {formatRelative(folder.createdAt)}</span>
-				</button>
+				</div>
 			</div>
 		</article>
 	);
@@ -1386,8 +1549,24 @@ function FileCard({
 }) {
 	const kind = fileKind(file.name, file.contentType);
 	return (
-		<article className="file-card" data-selected={selected}>
-			<div className="file-card__actions">
+		<article
+			className="file-card"
+			data-selected={selected}
+			tabIndex={0}
+			onClick={onToggle}
+			onDoubleClick={(event) => {
+				event.stopPropagation();
+				onOpen();
+			}}
+			onKeyDown={(event) => {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					onOpen();
+				}
+			}}
+			title="Bấm đúp để tải xuống"
+		>
+			<div className="file-card__actions" onClick={(event) => event.stopPropagation()}>
 				<Menu
 					label={`Thao tác cho ${file.name}`}
 					trigger={({ toggle }) => <IconButton icon="ellipsis" label="Thao tác" size="sm" onClick={toggle} />}
@@ -1395,12 +1574,14 @@ function FileCard({
 				/>
 			</div>
 			<div className="file-card__top">
-				<label className="file-card__check">
+				<label className="file-card__check" onClick={(event) => event.stopPropagation()}>
 					<input type="checkbox" checked={selected} aria-label={`Chọn tệp ${file.name}`} onChange={onToggle} />
 				</label>
-				<button type="button" className="file-card__open" onClick={onOpen} aria-label={`Tải xuống ${file.name}`}>
-					<span className={`file-card__icon ${kind.tone}`}>
-						<Icon name={kind.icon} />
+				<div className="file-card__open">
+					<span className={`file-card__preview ${kind.tone}`}>
+						<span className={`file-card__icon ${kind.tone}`}>
+							<Icon name={kind.icon} />
+						</span>
 					</span>
 					<span className="file-card__name clamp-2" title={file.name}>
 						{file.name}
@@ -1408,7 +1589,7 @@ function FileCard({
 					<span className="file-card__meta">
 						{formatBytes(file.size)} · {formatRelative(file.updatedAt)}
 					</span>
-				</button>
+				</div>
 			</div>
 		</article>
 	);

@@ -284,6 +284,12 @@
 	gap: var(--space-3);
 }
 
+.toolbar__count {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
 .toolbar__spacer {
 	flex: 1;
 	min-width: var(--space-4);
@@ -411,6 +417,37 @@
 	display: flex;
 	align-items: flex-start;
 	gap: var(--space-4);
+}
+
+.file-card:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* Vùng "preview" kiểu Google Drive: ô màu lớn chứa icon loại tệp. */
+.file-card__preview {
+	display: grid;
+	place-items: center;
+	width: 100%;
+	height: 80px;
+	margin-bottom: var(--space-4);
+	border-radius: var(--radius-md);
+	background: var(--surface-3);
+	color: var(--text-secondary);
+}
+
+.file-card__preview .file-card__icon svg {
+	width: 32px;
+	height: 32px;
+}
+
+.file-card__preview.tone-folder {
+	background: var(--brand-50);
+	color: var(--brand-600);
+}
+
+.file-card__preview .file-card__icon {
+	background: transparent;
 }
 
 .file-card__icon {
@@ -603,6 +640,256 @@
 @media (max-width: 767px) {
 	.file-list__row.file-list__row--trash > .file-list__meta {
 		margin-left: 0;
+	}
+}
+
+/* --- drive-style file table (Google Drive / Nextcloud) --- */
+.drive {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	overflow: hidden;
+	overflow: clip;
+	box-shadow: var(--shadow-xs);
+}
+
+.drive__head,
+.drive__row {
+	display: grid;
+	grid-template-columns: 40px minmax(0, 1fr) 150px 110px 44px;
+	align-items: center;
+	gap: var(--space-4);
+	padding: 0 var(--space-5);
+}
+
+.drive__head {
+	position: sticky;
+	top: var(--topbar-height);
+	z-index: 2;
+	height: 40px;
+	background: var(--surface-2);
+	border-bottom: 1px solid var(--border);
+	color: var(--text-muted);
+	font-size: var(--text-xs);
+	font-weight: var(--weight-semibold);
+	letter-spacing: 0.02em;
+}
+
+.drive__check {
+	justify-content: center;
+}
+
+.drive__sort {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+	padding: var(--space-2) 0;
+	border: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: color var(--dur-fast) var(--ease-out);
+}
+
+.drive__sort:hover {
+	color: var(--text);
+}
+
+.drive__sort[data-active='true'] {
+	color: var(--text);
+}
+
+.drive__sort--right {
+	justify-content: flex-end;
+}
+
+.drive__sort-icon {
+	width: 11px;
+	height: 11px;
+	flex: none;
+	color: var(--accent);
+}
+
+.drive__head-tail {
+	display: block;
+}
+
+.drive__row {
+	min-height: 52px;
+	border-bottom: 1px solid var(--border);
+	cursor: default;
+	transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.drive__row:last-child {
+	border-bottom: none;
+}
+
+.drive__row:hover {
+	background: var(--surface-hover);
+}
+
+.drive__row:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+.drive__row[data-selected='true'] {
+	background: var(--accent-soft);
+	box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.drive__name {
+	display: flex;
+	align-items: center;
+	gap: var(--space-4);
+	min-width: 0;
+	padding: var(--space-2) 0;
+	border: none;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.drive__icon {
+	width: 32px;
+	height: 32px;
+	flex: none;
+	display: grid;
+	place-items: center;
+	border-radius: var(--radius-sm);
+	background: var(--surface-3);
+	color: var(--text-secondary);
+}
+
+.drive__icon svg {
+	width: 16px;
+	height: 16px;
+}
+
+.drive__text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	gap: 1px;
+}
+
+.drive__title {
+	font-size: var(--text-sm);
+	font-weight: var(--weight-medium);
+	color: var(--text);
+}
+
+.drive__subtitle {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.drive__mobile-meta {
+	display: none;
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.drive__cell {
+	font-size: var(--text-xs);
+	color: var(--text-secondary);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.drive__cell--size {
+	text-align: right;
+}
+
+.drive__actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	opacity: 0;
+	transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.drive__row:hover .drive__actions,
+.drive__row:focus-within .drive__actions,
+.drive__row[data-selected='true'] .drive__actions {
+	opacity: 1;
+}
+
+.drive__actions .btn {
+	background: var(--surface);
+}
+
+@media (max-width: 1180px) {
+	.drive__head,
+	.drive__row {
+		grid-template-columns: 40px minmax(0, 1fr) 130px 96px 44px;
+	}
+}
+
+@media (max-width: 767px) {
+	.drive__head {
+		display: none;
+	}
+
+	.drive__row {
+		grid-template-columns: 32px 32px minmax(0, 1fr) 40px;
+		grid-template-areas:
+			'check icon title actions'
+			'check icon meta actions';
+		row-gap: 0;
+		padding: var(--space-4) var(--space-5);
+	}
+
+	.drive__row .drive__check {
+		grid-area: check;
+		align-self: center;
+	}
+
+	.drive__row .drive__name,
+	.drive__row .drive__text {
+		display: contents;
+	}
+
+	.drive__row .drive__icon {
+		grid-area: icon;
+		align-self: center;
+	}
+
+	.drive__row .drive__title {
+		grid-area: title;
+		align-self: end;
+	}
+
+	.drive__row .drive__subtitle {
+		display: none;
+	}
+
+	.drive__row .drive__mobile-meta {
+		display: block;
+		grid-area: meta;
+		align-self: start;
+	}
+
+	.drive__row .drive__cell--modified,
+	.drive__row .drive__cell--size {
+		display: none;
+	}
+
+	.drive__row .drive__actions {
+		grid-area: actions;
+		opacity: 1;
+	}
+
+	.toolbar__count {
+		display: none;
 	}
 }
 

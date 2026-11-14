@@ -7,6 +7,10 @@ export interface MenuItem {
 	icon?: IconName;
 	danger?: boolean;
 	disabled?: boolean;
+	/** Đánh dấu mục đang được chọn (dùng cho menu sắp xếp). */
+	checked?: boolean;
+	/** Vạch ngăn cách giữa các nhóm mục. */
+	divider?: boolean;
 	onSelect: () => void;
 }
 
@@ -55,22 +59,28 @@ export function Menu({ trigger, items, label, align = 'end' }: MenuProps) {
 					aria-label={label}
 					style={align === 'end' ? { top: 'calc(100% + 6px)', right: 0 } : { top: 'calc(100% + 6px)', left: 0 }}
 				>
-					{items.map((item) => (
-						<button
-							key={item.id}
-							type="button"
-							role="menuitem"
-							className={`menu__item${item.danger ? ' menu__item--danger' : ''}`}
-							disabled={item.disabled}
-							onClick={() => {
-								setOpen(false);
-								item.onSelect();
-							}}
-						>
-							{item.icon ? <Icon name={item.icon} /> : null}
-							<span>{item.label}</span>
-						</button>
-					))}
+					{items.map((item) =>
+						item.divider ? (
+							<div key={item.id} className="menu__divider" role="separator" />
+						) : (
+							<button
+								key={item.id}
+								type="button"
+								role={item.checked ? 'menuitemradio' : 'menuitem'}
+								aria-checked={item.checked ? true : undefined}
+								className={`menu__item${item.danger ? ' menu__item--danger' : ''}`}
+								disabled={item.disabled}
+								onClick={() => {
+									setOpen(false);
+									item.onSelect();
+								}}
+							>
+								{item.icon ? <Icon name={item.icon} /> : null}
+								<span>{item.label}</span>
+								{item.checked ? <Icon name="check" className="menu__check" /> : null}
+							</button>
+						),
+					)}
 				</div>
 			) : null}
 		</div>
