@@ -7,8 +7,8 @@
 
 ## [Unreleased] — Phase 7 (14/11/2026) — DEPLOY WEB (REDESIGN UI/UX)
 
-> Trạng thái: **WEB ĐÃ DEPLOY PRODUCTION**. Worker `alkcloud-web` version `65372961-34f3-4af0-a9ad-3987c520b7e1` (14/11 15:00 UTC — Phase 7.2);
-> `/` → 307 → `/app/FvyLZVnF/`; E2E production `PASS=21 · FAIL=0`; `check-production-health` PASS.
+> Trạng thái: **WEB ĐÃ DEPLOY PRODUCTION**. Worker `alkcloud-web` version `00f603d9-c28c-4ab9-8543-6bbd2f1a69c9` (14/11 16:48 UTC — Phase 7.3);
+> `/` → 307 → `/app/BxvwFSFY/`; E2E production `PASS=21 · FAIL=0`; `check-production-health` PASS.
 > Bằng chứng: `docs/34-PRODUCTION-DEPLOYMENT-REPORT.md` §14–§17 · `docs/42-UI-UX-REDESIGN.md` · `docs/44-VISUAL-QA-REPORT.md`.
 
 ### Added
@@ -32,12 +32,14 @@
 | BUG-20 | Upload chậm: dữ liệu đi qua 2 Worker hop (API → relay → B2) + 3 lượt gọi API tuần tự mỗi file | Trung bình |
 | BUG-21 | Upload trùng tên báo "Thất bại" (409) dù file đã có trong thư mục; session `OPEN` bị rò quota | Cao |
 | BUG-22 | Hàng đợi upload chạy tuần tự ⇒ nhiều file rất chậm | Thấp |
+| BUG-23 | Menu nút **⋮** trong bảng Drive bị container `overflow: clip` cắt mất ⇒ menu hiện dở / "ẩn vào trong bảng" | Trung bình |
+| BUG-24 | Dạng lưới ("dạng ô") hiển thị thô: ô preview cao 80px, icon nhỏ, nền màu lệch ⇒ giao diện xấu | Thấp |
 
 ### Changed
 
 | Hạng mục | Nội dung | Tài liệu |
 | :--- | :--- | :--- |
-| **Bundle web** | P7.2: `index-FvyLZVnF.js` 362.55 kB (gzip **110.96 kB**), `index-CD7g8GN7.css` 55.30 kB (gzip 10.19 kB), `react-DbHEDQBy.js` 11.72 kB | `docs/14` §1 |
+| **Bundle web** | P7.3: `index-BxvwFSFY.js` 362.82 kB (gzip **111.07 kB**), `index-DBfBSX2J.css` 55.63 kB (gzip 10.24 kB), `react-DbHEDQBy.js` 11.72 kB | `docs/14` §1 |
 
 ---
 

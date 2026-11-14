@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon, type IconName } from './Icon.js';
 
 export interface MenuItem {
@@ -25,9 +25,21 @@ export interface MenuProps {
 
 export function Menu({ trigger, items, label, align = 'end' }: MenuProps) {
 	const [open, setOpen] = useState(false);
+	const [dropUp, setDropUp] = useState(false);
 	const rootRef = useRef<HTMLDivElement>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const menuId = useId();
+
+	useLayoutEffect(() => {
+		if (!open) {
+			setDropUp(false);
+			return;
+		}
+		const rect = triggerRef.current?.getBoundingClientRect();
+		if (!rect) return;
+		const estimated = items.length * 40 + 16;
+		setDropUp(rect.bottom + estimated > window.innerHeight && rect.top > estimated);
+	}, [open, items.length]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -53,11 +65,19 @@ export function Menu({ trigger, items, label, align = 'end' }: MenuProps) {
 			{trigger({ open, toggle: () => setOpen((value) => !value), ref: triggerRef })}
 			{open ? (
 				<div
-					className="menu"
+					className={dropUp ? 'menu menu--up' : 'menu'}
 					id={menuId}
 					role="menu"
 					aria-label={label}
-					style={align === 'end' ? { top: 'calc(100% + 6px)', right: 0 } : { top: 'calc(100% + 6px)', left: 0 }}
+					style={
+						align === 'end'
+							? dropUp
+								? { bottom: 'calc(100% + 6px)', right: 0 }
+								: { top: 'calc(100% + 6px)', right: 0 }
+							: dropUp
+								? { bottom: 'calc(100% + 6px)', left: 0 }
+								: { top: 'calc(100% + 6px)', left: 0 }
+					}
 				>
 					{items.map((item) =>
 						item.divider ? (

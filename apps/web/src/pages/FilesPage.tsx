@@ -1519,7 +1519,7 @@ function FolderCard({
 					/>
 				</label>
 				<div className="file-card__open">
-					<span className="file-card__preview tone-folder">
+					<span className="file-card__preview">
 						<span className="file-card__icon tone-folder">
 							<Icon name="folder" />
 						</span>
@@ -1578,7 +1578,7 @@ function FileCard({
 					<input type="checkbox" checked={selected} aria-label={`Chọn tệp ${file.name}`} onChange={onToggle} />
 				</label>
 				<div className="file-card__open">
-					<span className={`file-card__preview ${kind.tone}`}>
+					<span className="file-card__preview">
 						<span className={`file-card__icon ${kind.tone}`}>
 							<Icon name={kind.icon} />
 						</span>
