@@ -3,12 +3,12 @@
  *
  * Mục đích: phục vụ SPA + áp dụng security headers.
  *
- * GHI CHÚ VỀ CSP: CSP do Worker này đặt và **có hiệu lực** (đã kiểm chứng: URL chưa
- * từng bị cache trả đúng CSP của app). Nhưng **cache edge của zone** phục vụ lại
- * response cũ (HTML + header) kể cả khi client gửi `Cache-Control: no-cache` ⇒
- * sau mỗi lần deploy, người dùng có thể vẫn chạy bundle cũ (và CSP cũ).
+ * GHI CHÚ VỀ CSP: header CSP do Worker này đặt là **nguồn duy nhất** (đã kiểm chứng
+ * 14/11/2026). `public/_headers` cũng khai CSP nhưng Static Assets chỉ áp dụng nó
+ * cho response phục vụ thẳng từ asset service. Vì `[assets] run_worker_first = true`
+ * nên Worker luôn chạy trước ⇒ header của Worker ghi đè ⇒ không còn lệch CSP.
  *
- * ⇒ Vì vậy `/` **redirect** tới `/app/<version>/` (version = hash bundle hiện tại):
+ * ⇒ `/` **redirect** tới `/app/<version>/` (version = hash bundle hiện tại):
  *   - mỗi lần deploy là một path mới ⇒ cache key mới ⇒ luôn lấy bản mới;
  *   - kể cả khi response 307 bị cache (Location cũ), path đó vẫn phục vụ SPA của
  *     deployment **hiện tại** ⇒ người dùng luôn chạy code mới nhất.
@@ -43,29 +43,29 @@ function getVersion(env: Env): Promise<string> {
 	return versionPromise;
 }
 
+/** CSP — nguồn duy nhất cho Worker. Phải khớp với `public/_headers` (có test). */
+export const CONTENT_SECURITY_POLICY =
+	// KHÔNG có `unsafe-eval`/`wasm-unsafe-eval`: client dùng PBKDF2 qua
+	// WebCrypto (native) nên không cần compile WebAssembly.
+	// `script-src` cho phép beacon của Cloudflare Web Analytics
+	// (https://static.cloudflareinsights.com) — edge tự inject script này vào
+	// HTML ⇒ nếu CSP không cho phép thì console báo CSP violation mỗi lần
+	// tải trang. KHÔNG dùng 'unsafe-inline' cho script (chỉ style).
+	"default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; font-src 'self'; " +
+	// `connect-src` cho phép host B2 (presigned PUT trực tiếp — đường fallback
+	// của client) và host API. Đường chính vẫn là proxy qua API
+	// (`POST /uploads/:id/content`) nên upload **không phụ thuộc** CSP này.
+	"connect-src 'self' https://api.alk.xx.kg https://s3.ca-east-006.backblazeb2.com; " +
+	"object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
 const SECURITY_HEADERS: Record<string, string> = {
 	'x-content-type-options': 'nosniff',
 	'x-frame-options': 'DENY',
 	'referrer-policy': 'no-referrer',
-	'strict-transport-security': 'max-age=31536000; includeSubDomains',
-	'content-security-policy':
-		// KHÔNG có `unsafe-eval`/`wasm-unsafe-eval`: client dùng PBKDF2 qua
-		// WebCrypto (native) nên không cần compile WebAssembly.
-		// `script-src` cho phép beacon của Cloudflare Web Analytics
-		// (https://static.cloudflareinsights.com) — edge tự inject script này vào
-		// HTML ⇒ nếu CSP không cho phép thì console báo CSP violation mỗi lần
-		// tải trang. KHÔNG dùng 'unsafe-inline' cho script (chỉ style).
-		"default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; " +
-		"style-src 'self' 'unsafe-inline'; " +
-		"img-src 'self' data:; font-src 'self'; " +
-		// `connect-src` cho phép host B2 (presigned PUT trực tiếp — đường fallback
-		// của client) và host API. Đường chính vẫn là proxy qua API
-		// (`POST /uploads/:id/content`) nên upload **không phụ thuộc** CSP này.
-		// LƯU Ý: Cloudflare **edge** hiện **ghi đè** header CSP của Worker (đã kiểm
-		// chứng 14/11/2026: sửa file này không làm header live thay đổi) ⇒ owner cần
-		// sửa Transform Rule để giá trị dưới đây có hiệu lực trên zone.
-		"connect-src 'self' https://api.alk.xx.kg https://s3.ca-east-006.backblazeb2.com; " +
-		"object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+	'strict-transport-security': 'max-age=31536000; includeSubDomains; preload',
+	'content-security-policy': CONTENT_SECURITY_POLICY,
 	'permissions-policy': 'camera=(), microphone=(), geolocation=()',
 	'cross-origin-opener-policy': 'same-origin',
 };

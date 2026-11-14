@@ -20,6 +20,11 @@ routes = [
 directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+# Worker PHẢI chạy trước khi phục vụ static asset. Mặc định (`false`) Cloudflare
+# phục vụ `/` và `/assets/*` thẳng từ Static Assets ⇒ Worker không chạy ⇒ header
+# security lấy từ `public/_headers` (dễ lệch với `src/worker.ts`) và redirect
+# entry-point có version không bao giờ chạy.
+run_worker_first = true
 
 [observability]
 enabled = true
