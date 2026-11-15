@@ -5,15 +5,21 @@
 
 ---
 
-## [Unreleased] — Phase 8.1 (15/11/2026) — SỬA LỖI DI CHUYỂN THƯ MỤC CÓ CON TRONG THÙNG RÁC (CHƯA DEPLOY)
+## [Unreleased] — Phase 8.1 (15/11/2026) — SỬA LỖI DI CHUYỂN THƯ MỤC CÓ CON TRONG THÙNG RÁC (ĐÃ DEPLOY API)
 
-> Trạng thái: **CHƯA DEPLOY** — thay đổi chỉ nằm trong repo (chưa đẩy Worker production).
-> Kiểm thử: `typecheck` PASS · `401/401 test` PASS · `build` PASS · `check:limits` PASS (gzip 177.79 KiB).
+> Trạng thái: **API ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `66f43ad2-ee82-4ffc-bd4c-96665e2b3913`
+> (15/11 07:01 UTC). Health `https://api.alk.xx.kg/health` 200 · `https://api.alk.xx.kg/api/v1/health` 200 ·
+> E2E production **PASS=21 · FAIL=0** · kiểm chứng lỗi trực tiếp trên production (cây 33 tầng + xoá mềm
+> tầng sâu nhất ⇒ `move` trả **200** thay vì 400) · backup D1 production trước deploy:
+> `backups/alkcloud-d1-20261115T070104.sql` (1.13 MB).
+> Kiểm thử trước deploy: `typecheck` PASS · `401/401 test` PASS · `build` PASS · `check:limits` PASS (gzip 177.79 KiB) ·
+> `check-deployment.sh` PASS · `audit:quota` PASS=33.
 > Test hồi quy mới: `apps/api/test/api.test.ts` (cây 33 tầng, xoá mềm tầng sâu nhất) + `packages/db/test/repositories.test.ts`.
 >
 > Ghi chú vận hành (15/11): production đã dọn 33 thư mục rác nằm trong trash (sinh ra khi import cây thư mục
 > Google Drive với path sai) bằng `DELETE` trực tiếp trên D1 — trước khi vá, cây trash đó làm chặn
-> `move` của thư mục cha (`400 "Độ sâu thư mục vượt giới hạn"`).
+> `move` của thư mục cha (`400 "Độ sâu thư mục vượt giới hạn"`). Nhánh thử nghiệm verify fix (34 node)
+> cũng đã được dọn khỏi D1 sau khi kiểm chứng.
 
 ### Fixed
 
