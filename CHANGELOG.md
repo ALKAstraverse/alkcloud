@@ -65,6 +65,7 @@
 | BUG-30 | Nút **⋮** không hiện ở tablet 768px / thiết bị touch (chỉ mở khi hover) | Trung bình |
 | BUG-31 | Checkbox trong card lưới `opacity: 0` trên touch ⇒ không chọn được trên điện thoại | Trung bình |
 | BUG-32 | Nút "Tải lại" rơi xuống dòng riêng ở 768px (nằm ngoài nhóm công cụ) | Thấp |
+| BUG-34 | Hộp thoại **Di chuyển** không có lựa chọn **thư mục cha** ⇒ không đưa được mục lên 1 cấp (chỉ chọn được "Thư viện (gốc)" hoặc thư mục con) | Cao |
 
 ### Changed
 

@@ -178,13 +178,13 @@ export function RenameDialog({
 export function MoveDialog({
 	open,
 	folders,
-	currentFolderId,
+	ancestors,
 	onClose,
 	onSubmit,
 }: {
 	open: boolean;
 	folders: FolderEntry[];
-	currentFolderId: string | null;
+	ancestors: { id: string; name: string }[];
 	onClose: () => void;
 	onSubmit: (folderId: string | null) => Promise<void>;
 }) {
@@ -194,11 +194,12 @@ export function MoveDialog({
 
 	useEffect(() => {
 		if (open) {
-			setTarget(currentFolderId);
+			// Mặc định = thư mục cha gần nhất (nếu không có thì thư viện gốc).
+			setTarget(ancestors.length > 0 ? ancestors[ancestors.length - 1]!.id : null);
 			setError(null);
 			setBusy(false);
 		}
-	}, [open, currentFolderId]);
+	}, [open, ancestors]);
 
 	const submit = async (event: React.FormEvent) => {
 		event.preventDefault();
@@ -235,13 +236,29 @@ export function MoveDialog({
 						onChange={(event) => setTarget(event.target.value === '' ? null : event.target.value)}
 					>
 						<option value="">Thư viện (gốc)</option>
-						{folders.map((folder) => (
-							<option key={folder.id} value={folder.id}>
-								{folder.name}
-							</option>
-						))}
+						{ancestors.length > 0 ? (
+							<optgroup label="Thư mục cha">
+								{ancestors.map((node, index) => (
+									<option key={node.id} value={node.id}>
+										{'↳ '.repeat(index + 1)}
+										{node.name}
+									</option>
+								))}
+							</optgroup>
+						) : null}
+						{folders.length > 0 ? (
+							<optgroup label="Thư mục con của thư mục hiện tại">
+								{folders.map((folder) => (
+									<option key={folder.id} value={folder.id}>
+										{folder.name}
+									</option>
+								))}
+							</optgroup>
+						) : null}
 					</select>
-					<span className="field__hint">Chỉ hiển thị các thư mục con trực tiếp của thư mục hiện tại.</span>
+					<span className="field__hint">
+						Có thể chọn thư mục cha (để đưa mục lên một cấp) hoặc thư viện gốc.
+					</span>
 					{error ? (
 						<span className="field__error" role="alert">
 							<Icon name="circleExclamation" />

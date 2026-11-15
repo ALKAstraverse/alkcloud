@@ -1514,8 +1514,10 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 			/>
 			<MoveDialog
 				open={dialog.kind === 'move'}
-				folders={sortedFolders}
-				currentFolderId={folderId}
+				folders={sortedFolders.filter(
+					(folder) => !(dialog.kind === 'move' && dialog.target.type === 'folder' && folder.id === dialog.target.id),
+				)}
+				ancestors={breadcrumb.slice(0, -1)}
 				onClose={() => setDialog({ kind: 'none' })}
 				onSubmit={(destination) => (dialog.kind === 'move' ? handleMove(dialog.target, destination) : Promise.resolve())}
 			/>
