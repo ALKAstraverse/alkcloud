@@ -5,13 +5,19 @@
 
 ---
 
-## [Unreleased] — Phase 9 (15/11/2026) — KIỂM TOÁN CHỨC NĂNG + SỬA 9 LỖI (CHƯA DEPLOY)
+## [Unreleased] — Phase 9 (15/11/2026) — KIỂM TOÁN CHỨC NĂNG + SỬA 9 LỖI (ĐÃ DEPLOY API + WEB)
 
-> Trạng thái: **CHƯA DEPLOY PRODUCTION** — Phase 9 giữ production ở chế độ **read-only** (không deploy, không migration,
-> không sửa D1 production, không xoá object production). Lô lệnh dự kiến: `fix(core): resolve functional and integration issues`.
-> Kiểm thử trước commit: `typecheck` PASS · `npm test` **PASS=419 · FAIL=0** (121 suites) · `build` PASS ·
-> ma trận kiểm thử **HTTP thật** trên stack audit cô lập (API 8790 · s3rver 9010 · relay 9510 · D1 riêng):
+> Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `df814f40-d4a1-48f5-a2fa-627f5793cba8`
+> (15/11 15:14 UTC) · Worker `alkcloud-web` version `8e2819ad-1973-4937-82a9-f69528c6e0d5` (15/11 15:15 UTC) ·
+> web entry `/app/DmS_gYlo/` (bundle `index-DmS_gYlo.js`).
+> **Không có migration** trong lô này (chỉ logic route + client) ⇒ không cần migrate D1.
+> Backup D1 production trước deploy: `backups/alkcloud-d1-20261115T151328.sql` (1.18 MB).
+> Kiểm thử trước deploy: `typecheck` PASS · `npm test` **PASS=419 · FAIL=0** (121 suites) · `build` PASS ·
+> `check:limits` PASS (gzip 179.07 KiB) · `check-deployment.sh` PASS · `audit:quota` **PASS=33 · WARN=0 · FAIL=0** ·
+> `check-production-health.sh` PASS.
+> Ma trận kiểm thử **HTTP thật** trên stack audit cô lập (API 8790 · s3rver 9010 · relay 9510 · D1 riêng):
 > **26 test · 25 PASS · 1 BLOCKED · 0 FAIL**.
+> E2E production sau deploy: **PASS=21 · FAIL=0 · SKIP=0 · BLOCKED=0**.
 > Báo cáo: `docs/48-FUNCTIONAL-AUDIT-REPORT.md` · Ma trận: `docs/49-FUNCTIONAL-TEST-MATRIX.md` ·
 > Sổ xác minh: `docs/54-VERIFICATION-LEDGER-PHASE9.md`.
 
@@ -53,9 +59,9 @@
 
 | Hạng mục | Ghi chú |
 | :--- | :--- |
-| Deploy production | Cần owner duyệt (như Phase 8): backup D1 ⇒ `npm run verify` ⇒ `check:limits` ⇒ `verify:deployment` ⇒ deploy API/web ⇒ E2E production |
-| Multipart ở tầng HTTP | **BLOCKED**: storage local `s3rver` không implement `ListParts` (`405`) ⇒ đã có regression test tầng app (`MockObjectStorage`) và test HTTP được đánh dấu `skip` kèm lý do |
+| Multipart ở tầng HTTP | **BLOCKED**: storage local `s3rver` không implement `ListParts` (`405`) ⇒ đã có regression test tầng app (`MockObjectStorage`) và test HTTP được đánh dấu `skip` kèm lý do. Luồng multipart production đã được E2E chạy thật (PASS) |
 | Turnstile | `TURNSTILE_SECRET_KEY` chưa được verify ở đâu; production **chưa bật** ⇒ P3, tách lô riêng |
+| Web client gửi `version` | API đã hỗ trợ optimistic concurrency nhưng web client chưa gửi `version` ⇒ hành vi hiện tại không đổi (xem `docs/51` §5) |
 
 ---
 
