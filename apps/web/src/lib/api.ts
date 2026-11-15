@@ -280,13 +280,41 @@ export async function listFiles(params: {
 	parentId?: string | null;
 	q?: string;
 	trashed?: boolean;
-}): Promise<{ files: FileEntry[]; mode: string }> {
+	cursor?: string;
+}): Promise<{ files: FileEntry[]; mode: string; nextCursor: string | null }> {
 	const query = new URLSearchParams();
 	if (params.parentId) query.set('parentId', params.parentId);
 	if (params.q) query.set('q', params.q);
 	if (params.trashed) query.set('trashed', 'true');
+	if (params.cursor) query.set('cursor', params.cursor);
 	const suffix = query.toString();
 	return apiRequest(`/files${suffix ? `?${suffix}` : ''}`);
+}
+
+/**
+ * Tải TOÀN BỘ file khớp điều kiện bằng cách lần theo `nextCursor`.
+ *
+ * API mặc định trả 100 file/trang; nếu chỉ gọi 1 lần thì file thứ 101 trở đi
+ * **không bao giờ hiện** trong UI (trước đây web bị giới hạn cứng 100 file).
+ */
+export async function listFilesAll(params: {
+	parentId?: string | null;
+	q?: string;
+	trashed?: boolean;
+}): Promise<{ files: FileEntry[]; mode: string }> {
+	const files: FileEntry[] = [];
+	let cursor: string | undefined;
+	let mode = 'NORMAL';
+	// Trần 50 trang = 5000 file: đủ cho mọi thư mục hợp lý và tránh vòng lặp
+	// vô hạn nếu API trả cursor lỗi.
+	for (let page = 0; page < 50; page += 1) {
+		const result = await listFiles({ ...params, cursor });
+		files.push(...result.files);
+		mode = result.mode;
+		if (!result.nextCursor) break;
+		cursor = result.nextCursor;
+	}
+	return { files, mode };
 }
 
 export async function listFolders(parentId?: string | null): Promise<{ folders: FolderEntry[] }> {

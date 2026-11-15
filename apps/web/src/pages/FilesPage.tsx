@@ -8,7 +8,7 @@ import {
 	fileDownloadUrl,
 	getQuota,
 	getUsage,
-	listFiles,
+	listFilesAll,
 	listFolders,
 	listTrash,
 	listTrashFolders,
@@ -179,7 +179,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 					setTrashFolders(trashFolderResult.folders);
 				} else {
 					const [fileResult, folderResult] = await Promise.all([
-						listFiles({ parentId: folderId, q: query || undefined }),
+						listFilesAll({ parentId: folderId, q: query || undefined }),
 						listFolders(folderId),
 					]);
 					setFiles(fileResult.files);

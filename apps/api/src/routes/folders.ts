@@ -84,8 +84,20 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 		if (!folder || folder.deletedAt) throw AppError.notFound('Không tìm thấy thư mục');
 		const parsed = renameSchema.safeParse(await parseJsonBody<unknown>(c.req.raw).catch(() => ({})));
 		if (!parsed.success) throw AppError.badRequest('Dữ liệu không hợp lệ');
+		// Optimistic concurrency (xem `POST /files/:id/move`).
+		if (parsed.data.version !== undefined && parsed.data.version !== folder.version) {
+			throw AppError.conflict('Thư mục đã thay đổi — tải lại danh sách rồi thử lại');
+		}
 		try {
-			await context.db.renameFolder(folder.id, parsed.data.name, context.now().toISOString());
+			const renamed = await context.db.renameFolder(
+				folder.id,
+				parsed.data.name,
+				context.now().toISOString(),
+				parsed.data.version,
+			);
+			if (!renamed) {
+				throw AppError.conflict('Thư mục đã thay đổi — tải lại danh sách rồi thử lại');
+			}
 		} catch (error) {
 			mapDbConflict(error, `Đã có thư mục tên "${parsed.data.name}" tại vị trí này`);
 		}
@@ -107,6 +119,9 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 		if (!folder || folder.deletedAt) throw AppError.notFound('Không tìm thấy thư mục');
 		const parsed = moveSchema.safeParse(await parseJsonBody<unknown>(c.req.raw).catch(() => ({})));
 		if (!parsed.success) throw AppError.badRequest('Dữ liệu không hợp lệ');
+		if (parsed.data.version !== undefined && parsed.data.version !== folder.version) {
+			throw AppError.conflict('Thư mục đã thay đổi — tải lại danh sách rồi thử lại');
+		}
 
 		let depth = 0;
 		if (parsed.data.parentId) {
@@ -126,7 +141,16 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 			}
 		}
 		try {
-			await context.db.moveFolder(folder.id, parsed.data.parentId ?? null, depth, context.now().toISOString());
+			const moved = await context.db.moveFolder(
+				folder.id,
+				parsed.data.parentId ?? null,
+				depth,
+				context.now().toISOString(),
+				parsed.data.version,
+			);
+			if (!moved) {
+				throw AppError.conflict('Thư mục đã thay đổi — tải lại danh sách rồi thử lại');
+			}
 		} catch (error) {
 			mapDbConflict(error, `Thư mục đích đã có thư mục tên "${folder.name}"`);
 		}
@@ -146,6 +170,13 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 		const mode = c.get('quotaMode');
 		const folder = await context.db.getFolder(c.req.param('id'));
 		if (!folder || folder.deletedAt) throw AppError.notFound('Không tìm thấy thư mục');
+		// `version` tuỳ chọn: client có thể gửi để chống ghi đè thao tác.
+		const body = (await parseJsonBody<{ version?: number }>(c.req.raw).catch(() => ({}))) as {
+			version?: number;
+		};
+		if (body.version !== undefined && body.version !== folder.version) {
+			throw AppError.conflict('Thư mục đã thay đổi — tải lại danh sách rồi thử lại');
+		}
 		const batchId = `bat_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
 		const now = context.now().toISOString();
 		// Cần cả cây trash: file nằm trong thư mục con đã xoá trước đó cũng phải
@@ -154,7 +185,15 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 		// SEC-05: 1 câu UPDATE (recursive CTE) cho toàn bộ subtree, KHÔNG loop từng node.
 		// Loop từng node = 1 subrequest mỗi node ⇒ vượt trần 50 subrequest của
 		// Workers Free ⇒ request chết giữa chừng ⇒ file mồ côi vĩnh viễn.
-		const nodesDeleted = await context.db.softDeleteFolderSubtree(folder.id, batchId, now);
+		const nodesDeleted = await context.db.softDeleteFolderSubtree(
+			folder.id,
+			batchId,
+			now,
+			body.version,
+		);
+		if (nodesDeleted === 0) {
+			throw AppError.conflict('Thư mục đã thay đổi — tải lại danh sách rồi thử lại');
+		}
 		// File bên trong thư mục cũng phải vào trash cùng batch — nếu không, chúng
 		// thành mồ côi: vẫn tính quota, không hiện trong trash, không bao giờ purge.
 		const purgeAfter = addDays(now, TRASH_RETENTION_DAYS);

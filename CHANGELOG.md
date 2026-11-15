@@ -5,6 +5,60 @@
 
 ---
 
+## [Unreleased] — Phase 9 (15/11/2026) — KIỂM TOÁN CHỨC NĂNG + SỬA 9 LỖI (CHƯA DEPLOY)
+
+> Trạng thái: **CHƯA DEPLOY PRODUCTION** — Phase 9 giữ production ở chế độ **read-only** (không deploy, không migration,
+> không sửa D1 production, không xoá object production). Lô lệnh dự kiến: `fix(core): resolve functional and integration issues`.
+> Kiểm thử trước commit: `typecheck` PASS · `npm test` **PASS=419 · FAIL=0** (121 suites) · `build` PASS ·
+> ma trận kiểm thử **HTTP thật** trên stack audit cô lập (API 8790 · s3rver 9010 · relay 9510 · D1 riêng):
+> **26 test · 25 PASS · 1 BLOCKED · 0 FAIL**.
+> Báo cáo: `docs/48-FUNCTIONAL-AUDIT-REPORT.md` · Ma trận: `docs/49-FUNCTIONAL-TEST-MATRIX.md` ·
+> Sổ xác minh: `docs/54-VERIFICATION-LEDGER-PHASE9.md`.
+
+### Fixed
+
+| ID | Lỗi | Mức độ |
+| :--- | :--- | :--- |
+| BUG-35 | `GET /files` không phân trang (`cursor` bị bỏ qua, không có `nextCursor`) ⇒ file thứ 101 trở đi không bao giờ hiện | Cao |
+| BUG-36 | `GET /files?trashed=true` lọc nhầm `folder_id IS NULL` ⇒ file nằm trong thư mục đã xoá không hiện trong thùng rác | Cao |
+| BUG-37 | `POST /files/:id/move` không validate body ⇒ file **lặng lẽ** bị chuyển về thư mục gốc khi body thiếu/sai field | Cao |
+| BUG-38 | `version` được schema khai báo nhưng route không kiểm tra ⇒ mất cập nhật âm thầm (hai tab cùng sửa 1 file) | Trung bình |
+| BUG-39 | `GET /system/audit?limit=1.5` ⇒ HTTP **500** (`D1_ERROR: datatype mismatch`) thay vì 400 | Trung bình |
+| BUG-40 | Multipart không kiểm tra tổng bytes thực tế ⇒ row D1 ghi `size` lệch với object (quota lệch, tải sai nội dung) | Cao |
+| BUG-41 | Huỷ upload single-part để lại **object mồ côi** trong bucket (không còn row nào trỏ tới) | Trung bình |
+| BUG-42 | Web: hộp thoại xác nhận xoá/purge **kẹt ở loading** sau lần dùng đầu (component không unmount ⇒ state `busy` sống sót) | Cao |
+| BUG-43 | Web: danh sách file cắt cứng ở 100 mục (API trả 100, client không lấy tiếp) | Cao |
+
+### Changed
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| **`GET /files`** | Trả thêm **`nextCursor`** (base64url mã hoá mốc `(name_lower, id)`) hoặc `null` khi hết danh sách. Phân trang theo **keyset** (không `offset`) ⇒ không trùng/không thiếu khi danh sách thay đổi giữa 2 lần gọi. `cursor` sai định dạng ⇒ `400` |
+| **`GET /files` — phạm vi lọc** | `trashed=true` mà không có `parentId` ⇒ trả **mọi** file trong thùng rác (trước: chỉ file ở thư mục gốc) |
+| **`POST /files/:id/move`** | Body phải có `folderId` (bắt buộc, `null` = về gốc) — schema mới `fileMoveSchema`; body rỗng/sai field ⇒ `400` (trước: `200` + chuyển về gốc) |
+| **Optimistic concurrency** | `version` (tuỳ chọn) trong body rename/move/delete của **file** và **folder**: khớp ⇒ thực hiện, lệch ⇒ `409`. UPDATE có điều kiện `AND version = ?` ⇒ atomic. Client **không** gửi `version` ⇒ hành vi không đổi |
+| **`DELETE /uploads/:id`** (single-part) | Xoá object đã PUT trong bucket khi huỷ session (trước: để lại object mồ côi) |
+| **`GET /system/audit`** | `limit` phải là **số nguyên** trong `[1,500]`; sai ⇒ `400` |
+| **Web client** | `listFiles()` nhận `cursor` + trả `nextCursor`; thêm `listFilesAll()` lần theo cursor (trần 50 trang = 5000 file); `FilesPage` dùng `listFilesAll()` |
+
+### Added
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| Ma trận kiểm thử HTTP thật | `apps/api/test/integration/functional-audit.test.ts` — 26 test, không mock API, tự skip khi không có `ALKCLOUD_AUDIT_BASE` |
+| Regression test | `apps/api/test/functional-audit-regression.test.ts` (14 test) · `apps/web/test/pagination.test.ts` (4 test) |
+| Tài liệu | `docs/48` … `docs/54` (báo cáo audit, ma trận test, phân trang, concurrency, toàn vẹn upload, sửa web, sổ xác minh) |
+
+### Not deployed / còn mở
+
+| Hạng mục | Ghi chú |
+| :--- | :--- |
+| Deploy production | Cần owner duyệt (như Phase 8): backup D1 ⇒ `npm run verify` ⇒ `check:limits` ⇒ `verify:deployment` ⇒ deploy API/web ⇒ E2E production |
+| Multipart ở tầng HTTP | **BLOCKED**: storage local `s3rver` không implement `ListParts` (`405`) ⇒ đã có regression test tầng app (`MockObjectStorage`) và test HTTP được đánh dấu `skip` kèm lý do |
+| Turnstile | `TURNSTILE_SECRET_KEY` chưa được verify ở đâu; production **chưa bật** ⇒ P3, tách lô riêng |
+
+---
+
 ## [Unreleased] — Phase 8.1 (15/11/2026) — SỬA LỖI DI CHUYỂN THƯ MỤC CÓ CON TRONG THÙNG RÁC (ĐÃ DEPLOY API)
 
 > Trạng thái: **API ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `66f43ad2-ee82-4ffc-bd4c-96665e2b3913`

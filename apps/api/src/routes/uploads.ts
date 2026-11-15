@@ -451,6 +451,16 @@ export function createUploadRoutes(context: AppContext): Hono<AppEnv> {
 				const remote = remoteByNumber.get(part.partNumber);
 				if (!remote) throw AppError.badRequest(`Part ${part.partNumber} chưa được upload lên B2`);
 			}
+			// Tổng bytes thực tế phải khớp `totalSize` đã khai báo lúc tạo session.
+			// Trước đây chỉ kiểm tra SỐ part ⇒ client khai 200MB nhưng gửi 2 part
+			// 1 byte vẫn được chấp nhận ⇒ row D1 ghi size=200MB trong khi object
+			// thật chỉ 2 byte ⇒ quota lệch, download trả nội dung sai.
+			const uploadedBytes = remoteParts.reduce((sum, part) => sum + part.size, 0);
+			if (uploadedBytes !== session.totalSize) {
+				throw AppError.badRequest(
+					`Tổng dung lượng upload không khớp (B2: ${uploadedBytes}, dự kiến: ${session.totalSize})`,
+				);
+			}
 			// Hoàn tất bằng ETag do B2 trả về (ListParts) — không dùng ETag client gửi lên.
 			const completed = await context.storage.completeMultipartUpload({
 				key: session.objectKey,
@@ -532,6 +542,19 @@ export function createUploadRoutes(context: AppContext): Hono<AppEnv> {
 				await context.storage.abortMultipartUpload({ key: session.objectKey, uploadId: body.uploadId });
 			} catch {
 				// Không abort được multipart: để B2 lifecycle dọn (daysFromStartingToCancelingUnfinishedLargeFiles).
+			}
+		} else if (session.partCount === 1) {
+			// Single-part: nội dung đã được PUT thẳng lên B2 trước khi client bấm
+			// huỷ ⇒ object trở thành mồ côi (không còn row nào trỏ tới) nhưng vẫn
+			// chiếm dung lượng trong bucket. Xoá luôn khi huỷ.
+			try {
+				const versions = await context.storage.listObjectVersions(session.objectKey);
+				for (const version of versions) {
+					await context.storage.deleteObjectVersion(session.objectKey, version.versionId);
+				}
+				if (versions.length === 0) await context.storage.deleteObject(session.objectKey);
+			} catch {
+				// B2 lỗi tạm thời: object mồ côi sẽ được dọn khi session hết hạn (cron).
 			}
 		}
 		const now = context.now().toISOString();

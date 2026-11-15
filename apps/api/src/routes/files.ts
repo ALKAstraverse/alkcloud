@@ -1,7 +1,15 @@
-import { AppError, addDays, fileListQuerySchema, renameSchema, TRASH_RETENTION_DAYS } from '@alkcloud/core';
+import {
+	AppError,
+	addDays,
+	fileListQuerySchema,
+	fileMoveSchema,
+	renameSchema,
+	TRASH_RETENTION_DAYS,
+} from '@alkcloud/core';
 import { Hono } from 'hono';
 import type { AppContext } from '../context.js';
 import { recordAudit } from '../lib/audit.js';
+import { decodeFileCursor, encodeFileCursor } from '../lib/cursor.js';
 import { encodeRfc5987, json, mapDbConflict, parseJsonBody } from '../lib/http.js';
 import { assertCapability, degradationHeaders } from '../lib/quota-guard.js';
 import { assertRangeSatisfiable } from '../lib/range.js';
@@ -19,13 +27,34 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		const query = parsed.data;
 		if (query.q && query.q.length > 0) assertCapability(mode, 'allowSearch');
 
-		const files = await context.db.listFiles({
-			folderId: query.q ? undefined : (query.parentId ?? null),
+		// Phạm vi thư mục:
+		// - có `q` (tìm kiếm) ⇒ xuyên suốt mọi thư mục;
+		// - có `parentId` ⇒ đúng thư mục đó;
+		// - `trashed=true` mà không có `parentId` ⇒ MỌI file trong thùng rác
+		//   (trước đây mặc định `folder_id IS NULL` ⇒ file nằm trong thư mục
+		//   bị xoá không bao giờ hiện trong thùng rác);
+		// - còn lại ⇒ thư mục gốc.
+		const folderScope: string | null | undefined = query.q
+			? undefined
+			: query.parentId !== undefined
+				? query.parentId
+				: query.trashed === 'true'
+					? undefined
+					: null;
+
+		// Lấy `limit + 1` dòng để biết còn trang sau không (mà không cần
+		// query COUNT(*) — tốn thêm 1 subrequest mỗi lần gọi).
+		const rows = await context.db.listFiles({
+			folderId: folderScope,
 			query: query.q,
-			limit: query.limit,
+			limit: query.limit + 1,
 			offset: 0,
 			deletedOnly: query.trashed === 'true',
+			cursor: query.cursor ? decodeFileCursor(query.cursor) : null,
 		});
+		const hasMore = rows.length > query.limit;
+		const files = hasMore ? rows.slice(0, query.limit) : rows;
+		const last = files[files.length - 1];
 		return json(
 			{
 				files: files.map((file) => ({
@@ -39,6 +68,9 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 					purgeAfter: file.purgeAfter,
 					folderId: file.folderId,
 				})),
+				// Cursor cho trang kế tiếp (null = đã hết danh sách).
+				nextCursor:
+					hasMore && last ? encodeFileCursor({ nameLower: last.nameLower, id: last.id }) : null,
 				mode,
 			},
 			200,
@@ -88,11 +120,24 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		if (!file || file.deletedAt) throw AppError.notFound('Không tìm thấy file');
 		const parsed = renameSchema.safeParse(await parseJsonBody<unknown>(c.req.raw).catch(() => ({})));
 		if (!parsed.success) throw AppError.badRequest('Dữ liệu không hợp lệ');
+		// Optimistic concurrency: client gửi `version` của lúc nó đọc danh sách.
+		// Nếu file đã bị đổi/đổi tên/xoá bởi request khác ⇒ 409 thay vì ghi đè.
+		if (parsed.data.version !== undefined && parsed.data.version !== file.version) {
+			throw AppError.conflict('File đã thay đổi — tải lại danh sách rồi thử lại');
+		}
 
 		const now = context.now().toISOString();
 		if (parsed.data.name !== file.name) {
 			try {
-				await context.db.renameFile(file.id, parsed.data.name, now);
+				const renamed = await context.db.renameFile(
+					file.id,
+					parsed.data.name,
+					now,
+					parsed.data.version,
+				);
+				if (!renamed) {
+					throw AppError.conflict('File đã thay đổi — tải lại danh sách rồi thử lại');
+				}
 			} catch (error) {
 				mapDbConflict(error, `Đã có file tên "${parsed.data.name}" trong thư mục này`);
 			}
@@ -113,16 +158,28 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		const mode = c.get('quotaMode');
 		const file = await context.db.getFile(c.req.param('id'));
 		if (!file || file.deletedAt) throw AppError.notFound('Không tìm thấy file');
-		const body = (await parseJsonBody<{ folderId?: string | null }>(c.req.raw).catch(() => ({}))) as {
-			folderId?: string | null;
-		};
-		const folderId = body.folderId ?? null;
+		// Schema BẮT BUỘC có `folderId` (null = về gốc): body rỗng hoặc sai key
+		// ⇒ 400, không được lặng lẽ chuyển file về gốc.
+		const parsed = fileMoveSchema.safeParse(await parseJsonBody<unknown>(c.req.raw).catch(() => ({})));
+		if (!parsed.success) throw AppError.badRequest('Dữ liệu di chuyển không hợp lệ');
+		if (parsed.data.version !== undefined && parsed.data.version !== file.version) {
+			throw AppError.conflict('File đã thay đổi — tải lại danh sách rồi thử lại');
+		}
+		const folderId = parsed.data.folderId;
 		if (folderId) {
 			const folder = await context.db.getFolder(folderId);
 			if (!folder || folder.deletedAt) throw AppError.notFound('Thư mục đích không tồn tại');
 		}
 		try {
-			await context.db.moveFile(file.id, folderId, context.now().toISOString());
+			const moved = await context.db.moveFile(
+				file.id,
+				folderId,
+				context.now().toISOString(),
+				parsed.data.version,
+			);
+			if (!moved) {
+				throw AppError.conflict('File đã thay đổi — tải lại danh sách rồi thử lại');
+			}
 		} catch (error) {
 			mapDbConflict(error, `Thư mục đích đã có file tên "${file.name}"`);
 		}
@@ -142,9 +199,25 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		const mode = c.get('quotaMode');
 		const file = await context.db.getFile(c.req.param('id'));
 		if (!file || file.deletedAt) throw AppError.notFound('Không tìm thấy file');
+		// `version` tuỳ chọn: client có thể gửi để chống ghi đè thao tác.
+		const body = (await parseJsonBody<{ version?: number }>(c.req.raw).catch(() => ({}))) as {
+			version?: number;
+		};
+		if (body.version !== undefined && body.version !== file.version) {
+			throw AppError.conflict('File đã thay đổi — tải lại danh sách rồi thử lại');
+		}
 		const now = context.now();
 		const batchId = `bat_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
-		await context.db.softDeleteFile(file.id, batchId, addDays(now.toISOString(), TRASH_RETENTION_DAYS), now.toISOString());
+		const deleted = await context.db.softDeleteFile(
+			file.id,
+			batchId,
+			addDays(now.toISOString(), TRASH_RETENTION_DAYS),
+			now.toISOString(),
+			body.version,
+		);
+		if (!deleted) {
+			throw AppError.conflict('File đã thay đổi — tải lại danh sách rồi thử lại');
+		}
 		await recordAudit(context, {
 			action: 'file.delete',
 			actor: auth?.email ?? 'unknown',

@@ -227,6 +227,12 @@ export interface ListFilesOptions {
 	 * nhưng thực tế hành vi là lọc theo nhóm ⇒ dễ dùng sai. Đã đổi tên để rõ nghĩa.
 	 */
 	deletedOnly?: boolean;
+	/**
+	 * Keyset pagination: chỉ lấy các dòng đứng SAU mốc `(nameLower, id)`.
+	 * Dùng thay cho `offset` để không bị trùng/mất dòng khi có file mới
+	 * được thêm giữa 2 lần gọi (offset-based pagination dễ "nhảy" dòng).
+	 */
+	cursor?: { nameLower: string; id: string } | null;
 }
 
 export class Database {
@@ -408,24 +414,44 @@ export class Database {
 		return result.rows.map(mapFolder);
 	}
 
-	async renameFolder(id: Id, name: string, now: string): Promise<void> {
-		await this.driver.run(
-			'UPDATE folders SET name = ?, name_lower = ?, updated_at = ?, version = version + 1 WHERE id = ? AND deleted_at IS NULL',
-			[name, name.toLowerCase(), now, id],
+	/**
+	 * Đổi tên thư mục. `expectedVersion` (tuỳ chọn) ⇒ chỉ update khi version
+	 * hiện tại khớp; trả `false` khi không có dòng khớp ⇒ route trả 409.
+	 */
+	async renameFolder(id: Id, name: string, now: string, expectedVersion?: number): Promise<boolean> {
+		const versionClause = expectedVersion === undefined ? '' : ' AND version = ?';
+		const params: unknown[] = [name, name.toLowerCase(), now, id];
+		if (expectedVersion !== undefined) params.push(expectedVersion);
+		const result = await this.driver.run(
+			`UPDATE folders SET name = ?, name_lower = ?, updated_at = ?, version = version + 1
+			 WHERE id = ? AND deleted_at IS NULL${versionClause}`,
+			params,
 		);
+		return (result.changes ?? 0) > 0;
 	}
 
-	async moveFolder(id: Id, parentId: Id | null, depth: number, now: string): Promise<void> {
+	async moveFolder(
+		id: Id,
+		parentId: Id | null,
+		depth: number,
+		now: string,
+		expectedVersion?: number,
+	): Promise<boolean> {
+		const versionClause = expectedVersion === undefined ? '' : ' AND version = ?';
 		// Phải lấy depth CŨ trước khi update, nếu không delta luôn = 0.
 		const previousDepth = await this.getFolderDepth(id);
-		await this.driver.run(
-			'UPDATE folders SET parent_id = ?, depth = ?, updated_at = ?, version = version + 1 WHERE id = ? AND deleted_at IS NULL',
-			[parentId, depth, now, id],
+		const params: unknown[] = [parentId, depth, now, id];
+		if (expectedVersion !== undefined) params.push(expectedVersion);
+		const result = await this.driver.run(
+			`UPDATE folders SET parent_id = ?, depth = ?, updated_at = ?, version = version + 1
+			 WHERE id = ? AND deleted_at IS NULL${versionClause}`,
+			params,
 		);
+		if ((result.changes ?? 0) === 0) return false;
 		// Hậu duệ phải cập nhật depth theo delta — nếu không, `depth` của cây con
 		// sẽ sai ⇒ check MAX_FOLDER_DEPTH ở các lần create/move sau sẽ tính sai.
 		const delta = depth - previousDepth;
-		if (delta === 0) return;
+		if (delta === 0) return true;
 		// Trừ chính folder đã update ở trên (`id != ?`) — nếu không nó bị cộng
 		// delta thêm lần nữa và depth sai.
 		await this.driver.run(
@@ -440,6 +466,7 @@ export class Database {
 			 ) AND deleted_at IS NULL`,
 			[delta, now, id, id],
 		);
+		return true;
 	}
 
 	async getFolderDepth(id: Id): Promise<number> {
@@ -511,19 +538,29 @@ export class Database {
 	 * 1 D1 subrequest. Workers Free chỉ cho 50 subrequest/request ⇒ subtree > ~45
 	 * folder làm request chết GIỮA CHỪNG ⇒ một phần folder đã xoá, phần còn lại
 	 * chưa ⇒ file bên trong mồ côi (vô hình, vẫn tính quota, KHÔNG BAO GIỜ purge).
+	 *
+	 * `expectedVersion` (tuỳ chọn) ⇒ version của NÚT GỐC phải khớp, nếu không
+	 * cây con rỗng ⇒ 0 dòng bị xoá ⇒ route trả 409 (optimistic concurrency).
 	 */
-	async softDeleteFolderSubtree(id: Id, batchId: Id, now: string): Promise<number> {
+	async softDeleteFolderSubtree(
+		id: Id,
+		batchId: Id,
+		now: string,
+		expectedVersion?: number,
+	): Promise<number> {
+		const rootClause = expectedVersion === undefined ? 'id = ?' : 'id = ? AND version = ?';
+		const rootParams: unknown[] = expectedVersion === undefined ? [id] : [id, expectedVersion];
 		const result = await this.driver.run(
 			`UPDATE folders SET deleted_at = ?, deleted_batch_id = ?, updated_at = ?, version = version + 1
 			 WHERE deleted_at IS NULL AND id IN (
 				WITH RECURSIVE subtree(id) AS (
-					SELECT id FROM folders WHERE id = ?
+					SELECT id FROM folders WHERE ${rootClause}
 					UNION ALL
 					SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
 				)
 				SELECT id FROM subtree
 			 )`,
-			[now, batchId, now, id],
+			[now, batchId, now, ...rootParams],
 		);
 		return result.changes ?? 0;
 	}
@@ -627,6 +664,10 @@ export class Database {
 			clauses.push('name_lower LIKE ?');
 			params.push(`%${options.query.toLowerCase()}%`);
 		}
+		if (options.cursor) {
+			clauses.push('(name_lower > ? OR (name_lower = ? AND id > ?))');
+			params.push(options.cursor.nameLower, options.cursor.nameLower, options.cursor.id);
+		}
 		params.push(options.limit, options.offset);
 		const result = await this.driver.query(
 			`SELECT * FROM files WHERE ${clauses.join(' AND ')} ORDER BY name_lower ASC, id ASC LIMIT ? OFFSET ?`,
@@ -635,27 +676,56 @@ export class Database {
 		return result.rows.map(mapFile);
 	}
 
-	async renameFile(id: Id, name: string, now: string): Promise<void> {
-		await this.driver.run(
-			'UPDATE files SET name = ?, name_lower = ?, updated_at = ?, version = version + 1 WHERE id = ? AND deleted_at IS NULL',
-			[name, name.toLowerCase(), now, id],
+	/**
+	 * Đổi tên file. `expectedVersion` (tuỳ chọn) ⇒ chỉ update khi version hiện tại
+	 * khớp (optimistic concurrency). Trả `false` khi không có dòng nào khớp
+	 * (file đã bị xoá/sửa bởi request khác) ⇒ route trả 409.
+	 */
+	async renameFile(id: Id, name: string, now: string, expectedVersion?: number): Promise<boolean> {
+		const versionClause = expectedVersion === undefined ? '' : ' AND version = ?';
+		const params: unknown[] = [name, name.toLowerCase(), now, id];
+		if (expectedVersion !== undefined) params.push(expectedVersion);
+		const result = await this.driver.run(
+			`UPDATE files SET name = ?, name_lower = ?, updated_at = ?, version = version + 1
+			 WHERE id = ? AND deleted_at IS NULL${versionClause}`,
+			params,
 		);
+		return (result.changes ?? 0) > 0;
 	}
 
-	async moveFile(id: Id, folderId: Id | null, now: string): Promise<void> {
-		await this.driver.run(
-			'UPDATE files SET folder_id = ?, updated_at = ?, version = version + 1 WHERE id = ? AND deleted_at IS NULL',
-			[folderId, now, id],
+	async moveFile(id: Id, folderId: Id | null, now: string, expectedVersion?: number): Promise<boolean> {
+		const versionClause = expectedVersion === undefined ? '' : ' AND version = ?';
+		const params: unknown[] = [folderId, now, id];
+		if (expectedVersion !== undefined) params.push(expectedVersion);
+		const result = await this.driver.run(
+			`UPDATE files SET folder_id = ?, updated_at = ?, version = version + 1
+			 WHERE id = ? AND deleted_at IS NULL${versionClause}`,
+			params,
 		);
+		return (result.changes ?? 0) > 0;
 	}
 
-	async softDeleteFile(id: Id, batchId: Id, purgeAfter: string, now: string): Promise<void> {
-		await this.driver.run(
+	/**
+	 * Xoá mềm file. `expectedVersion` (tuỳ chọn) ⇒ chỉ xoá khi version khớp.
+	 * Trả `false` khi không có dòng khớp (đã bị xoá/sửa bởi request khác).
+	 */
+	async softDeleteFile(
+		id: Id,
+		batchId: Id,
+		purgeAfter: string,
+		now: string,
+		expectedVersion?: number,
+	): Promise<boolean> {
+		const versionClause = expectedVersion === undefined ? '' : ' AND version = ?';
+		const params: unknown[] = [now, batchId, purgeAfter, now, id];
+		if (expectedVersion !== undefined) params.push(expectedVersion);
+		const result = await this.driver.run(
 			`UPDATE files SET deleted_at = ?, deleted_batch_id = ?, purge_after = ?,
 				purge_state = 'NONE', purge_marked_at = NULL, updated_at = ?, version = version + 1
-			 WHERE id = ? AND deleted_at IS NULL`,
-			[now, batchId, purgeAfter, now, id],
+			 WHERE id = ? AND deleted_at IS NULL${versionClause}`,
+			params,
 		);
+		return (result.changes ?? 0) > 0;
 	}
 
 	/**

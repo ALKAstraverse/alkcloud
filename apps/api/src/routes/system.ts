@@ -49,8 +49,15 @@ export function createSystemRoutes(context: AppContext): Hono<AppEnv> {
 	});
 
 	app.get('/audit', async (c) => {
-		const limitRaw = Number(c.req.query('limit') ?? '100');
-		const limit = Number.isFinite(limitRaw) ? Math.min(500, Math.max(1, limitRaw)) : 100;
+		// `limit` phải là SỐ NGUYÊN trong [1, 500]. Trước đây `Math.min/max` nhận
+		// cả số thực (`limit=1.5`) ⇒ SQL `LIMIT 1.5` ⇒ D1 trả
+		// "datatype mismatch" ⇒ HTTP 500 cho input rõ ràng là sai.
+		const rawLimit = c.req.query('limit');
+		const parsedLimit = rawLimit === undefined ? 100 : Number(rawLimit);
+		if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 500) {
+			throw AppError.badRequest('limit phải là số nguyên trong khoảng 1–500');
+		}
+		const limit = parsedLimit;
 		const events = await context.db.listAudit(limit);
 		return json({ events });
 	});

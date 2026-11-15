@@ -62,6 +62,18 @@ export const moveSchema = z.object({
 	version: z.number().int().nonnegative().optional(),
 });
 
+/**
+ * Di chuyển FILE — dùng `folderId` (khác `moveSchema` của thư mục dùng `parentId`).
+ *
+ * `folderId` là BẮT BUỘC (nullable = đưa về gốc): nếu thiếu ⇒ 400.
+ * Trước đây route đọc `body.folderId ?? null` ⇒ body rỗng / sai key (`targetFolderId`)
+ * khiến file **lặng lẽ** bị chuyển về thư mục gốc — thao tác sai nhưng trả 200.
+ */
+export const fileMoveSchema = z.object({
+	folderId: idSchema.nullable(),
+	version: z.number().int().nonnegative().optional(),
+});
+
 export const fileListQuerySchema = z.object({
 	parentId: idSchema.nullable().optional(),
 	q: z.string().max(200).optional(),

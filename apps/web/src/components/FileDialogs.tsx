@@ -474,6 +474,12 @@ export function DeleteConfirmDialog({
 }) {
 	const [busy, setBusy] = useState(false);
 	const single = names.length === 1;
+	// Component KHÔNG bị unmount khi đóng (parent chỉ đổi `open`) ⇒ phải reset
+	// `busy` mỗi lần mở lại, nếu không nút xác nhận kẹt ở trạng thái loading
+	// vĩnh viễn sau lần xoá đầu tiên ⇒ không xoá/purge được nữa.
+	useEffect(() => {
+		if (open) setBusy(false);
+	}, [open]);
 	return (
 		<ConfirmDialog
 			open={open}
@@ -492,7 +498,8 @@ export function DeleteConfirmDialog({
 				setBusy(true);
 				void onConfirm()
 					.then(onClose)
-					.catch(() => setBusy(false));
+					.catch(() => setBusy(false))
+					.finally(() => setBusy(false));
 			}}
 		/>
 	);
@@ -510,6 +517,10 @@ export function PurgeConfirmDialog({
 	onConfirm: () => Promise<void>;
 }) {
 	const [busy, setBusy] = useState(false);
+	// Xem `DeleteConfirmDialog`: reset `busy` khi mở lại dialog.
+	useEffect(() => {
+		if (open) setBusy(false);
+	}, [open]);
 	return (
 		<ConfirmDialog
 			open={open}
@@ -524,7 +535,8 @@ export function PurgeConfirmDialog({
 				setBusy(true);
 				void onConfirm()
 					.then(onClose)
-					.catch(() => setBusy(false));
+					.catch(() => setBusy(false))
+					.finally(() => setBusy(false));
 			}}
 		/>
 	);
