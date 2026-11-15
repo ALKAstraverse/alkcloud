@@ -776,6 +776,46 @@ export class Database {
 		return result.changes ?? 0;
 	}
 
+	/**
+	 * Đếm file (kể cả đang trong trash) thuộc subtree folder — điều kiện chặn
+	 * purge thư mục: phải purge hết file trước để không tạo file mồ côi.
+	 */
+	async countFilesInFolderSubtree(id: Id): Promise<number> {
+		const result = await this.driver.query<{ n: number }>(
+			`WITH RECURSIVE subtree(id) AS (
+				SELECT id FROM folders WHERE id = ?
+				UNION ALL
+				SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
+			 )
+			 SELECT COUNT(*) AS n FROM files WHERE folder_id IN (SELECT id FROM subtree)`,
+			[id],
+		);
+		return num(result.rows[0]?.n);
+	}
+
+	/**
+	 * Xoá row folder đã xoá mềm (cascade dọn folder con) khi subtree không còn
+	 * file tham chiếu. Điều kiện kiểm tra lại trong câu DELETE để tránh race.
+	 */
+	async deleteTrashedFolder(id: Id): Promise<boolean> {
+		const result = await this.driver.run(
+			`DELETE FROM folders
+			 WHERE id = ? AND deleted_at IS NOT NULL
+			   AND NOT EXISTS (
+					SELECT 1 FROM files WHERE folder_id IN (
+						WITH RECURSIVE subtree(id) AS (
+							SELECT id FROM folders WHERE id = ?
+							UNION ALL
+							SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
+						)
+						SELECT id FROM subtree
+					)
+			   )`,
+			[id, id],
+		);
+		return (result.changes ?? 0) > 0;
+	}
+
 	async listFilesDueForPurge(now: string, limit: number): Promise<FileItem[]> {
 		const result = await this.driver.query(
 			'SELECT * FROM files WHERE deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ? ORDER BY purge_after ASC LIMIT ?',
@@ -824,12 +864,15 @@ export class Database {
 	 * Từ thời điểm này restore bị từ chối (409) ⇒ không tạo được file "ma" khi
 	 * xoá object xong mà xoá row thất bại (AUD-02).
 	 */
-	async markFilePurgeStarted(id: Id, now: string): Promise<boolean> {
+	async markFilePurgeStarted(id: Id, now: string, allowBeforeDue = false): Promise<boolean> {
+		// `allowBeforeDue`: owner chủ động xoá vĩnh viễn ngay ⇒ không chặn theo mốc retention.
+		const dueClause = allowBeforeDue ? '' : ' AND purge_after <= ?';
+		const params: unknown[] = allowBeforeDue ? [now, id] : [now, id, now];
 		const result = await this.driver.run(
 			`UPDATE files SET purge_state = 'PURGING', updated_at = ?
-			 WHERE id = ? AND deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ?
-			   AND purge_state != 'PURGING'`,
-			[now, id, now],
+			 WHERE id = ? AND deleted_at IS NOT NULL AND purge_after IS NOT NULL
+			   AND purge_state != 'PURGING'${dueClause}`,
+			params,
 		);
 		return (result.changes ?? 0) > 0;
 	}
@@ -860,12 +903,14 @@ export class Database {
 	 * AUD-02: chỉ xoá row khi state = `PURGING` ⇒ mọi lần xoá row đều đi qua
 	 * `markFilePurgeStarted` ⇒ luôn có bước đánh dấu trước khi xoá object.
 	 */
-	async deleteFileRowIfStillTrashed(id: Id, now: string): Promise<boolean> {
+	async deleteFileRowIfStillTrashed(id: Id, now: string, allowBeforeDue = false): Promise<boolean> {
+		const dueClause = allowBeforeDue ? '' : ' AND purge_after <= ?';
+		const params: unknown[] = allowBeforeDue ? [id] : [id, now];
 		const result = await this.driver.run(
 			`DELETE FROM files
-			 WHERE id = ? AND deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ?
-			   AND purge_state = 'PURGING'`,
-			[id, now],
+			 WHERE id = ? AND deleted_at IS NOT NULL AND purge_after IS NOT NULL
+			   AND purge_state = 'PURGING'${dueClause}`,
+			params,
 		);
 		return (result.changes ?? 0) > 0;
 	}

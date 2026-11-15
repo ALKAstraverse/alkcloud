@@ -254,12 +254,11 @@ describe('WS-F — E2E hành trình sản phẩm', () => {
 		const folderBody = (await folderDeleted.json()) as { deleted: number };
 		assert.equal(folderBody.deleted, 2, 'phải xoá root + 1 folder con');
 
-		// ── Bước 12: purge file sau khi hết retention ────────────────────
-		step('purge file');
-		await harness.request(`/files/${fileId}`, { method: 'DELETE' });
-		await harness.db.sqlDriver.run("UPDATE files SET purge_after = '2020-02-01T00:00:00.000Z' WHERE id = ?", [fileId]);
+		// ── Bước 12: purge ngay (KHÔNG cần chờ retention 30 ngày) ────────
+		step('purge file + folder ngay');
+		// File đang ở trash từ bước 11 (xoá folder subtree) — owner được xoá ngay.
 		const purged = await harness.request(`/files/${fileId}/purge`, { method: 'DELETE' });
-		assert.equal(purged.status, 200);
+		assert.equal(purged.status, 200, `purge ngay phải 200, nhận ${purged.status}`);
 
 		const afterPurge = await harness.request(`/files/${fileId}`);
 		assert.equal(afterPurge.status, 404, 'file đã purge không còn tồn tại');
@@ -269,13 +268,19 @@ describe('WS-F — E2E hành trình sản phẩm', () => {
 			'purge phải xoá object khỏi storage (không để lại object mồ côi)',
 		);
 
+		// Folder root + con đang ở trash; hết file ⇒ purge ngay được (cascade).
+		const purgedFolder = await harness.request(`/folders/${root.folder.id}/purge`, { method: 'DELETE' });
+		assert.equal(purgedFolder.status, 200, `purge folder ngay phải 200, nhận ${purgedFolder.status}`);
+		const trashFolders = (await (await harness.request('/folders/trash')).json()) as { folders: unknown[] };
+		assert.equal(trashFolders.folders.length, 0, 'purge folder phải dọn cả cây con');
+
 		// ── Bước 13: audit log ghi lại hành trình ────────────────────────
 		step('kiểm tra audit log');
 		const audit = (await (await harness.request('/system/audit?limit=500')).json()) as {
 			events: Array<{ action: string; actor: string | null }>;
 		};
 		const actions = new Set(audit.events.map((event) => event.action));
-		for (const expected of ['file.create', 'file.delete', 'file.rename', 'file.purge', 'share.create', 'share.revoke']) {
+		for (const expected of ['file.create', 'file.delete', 'file.rename', 'file.purge', 'folder.purge', 'share.create', 'share.revoke']) {
 			assert.ok(actions.has(expected), `audit log phải có sự kiện "${expected}"`);
 		}
 

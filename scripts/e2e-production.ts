@@ -395,13 +395,58 @@ async function main(): Promise<void> {
 		return 'rename/move/trash/restore OK';
 	});
 
-	await storageStep('files: purge trước hạn bị chặn (409)', async () => {
-		await api(`/files/${fileId}`, { method: 'DELETE' });
-		const purge = await api(`/files/${fileId}/purge`, { method: 'DELETE' });
-		assert(purge.status === 409, `purge trước hạn phải 409, trả ${purge.status}`);
-		const restore = await api(`/files/${fileId}/restore`, { method: 'POST', body: {} });
-		assert(restore.status === 200, `restore lại trả ${restore.status}`);
-		return '409 đúng (retention 30 ngày)';
+	await storageStep('files: purge ngay (không cần chờ 30 ngày)', async () => {
+		// File tạm riêng — không đụng file chính dùng cho phần share phía sau.
+		const session = await apiJson<{
+			uploadSessionId: string;
+			mode: string;
+			parts: Array<{ partNumber: number; url: string; headers: Record<string, string> }>;
+		}>('/uploads', {
+			method: 'POST',
+			body: {
+				fileName: `${PREFIX}purge-now.txt`,
+				contentType: 'text/plain',
+				totalSize: 5,
+				checksumSha256: null,
+				folderId: null,
+			},
+		});
+		assert(session.mode === 'single', `mode phải là single, trả ${session.mode}`);
+		const part = session.parts[0];
+		assert(part, 'không có part URL');
+		const put = await fetch(part.url, {
+			method: 'PUT',
+			headers: { 'content-type': 'text/plain', ...(part.headers ?? {}) },
+			body: 'hello',
+		});
+		assert(put.ok, `PUT lên B2 trả ${put.status}`);
+		const complete = await apiJson<{ file: { id: string } }>(`/uploads/${session.uploadSessionId}/complete`, {
+			method: 'POST',
+			body: { parts: [], checksumSha256: null },
+		});
+		const tempId = complete.file.id;
+		const del = await api(`/files/${tempId}`, { method: 'DELETE' });
+		assert(del.status === 200, `delete trả ${del.status}`);
+		const purge = await api(`/files/${tempId}/purge`, { method: 'DELETE' });
+		assert(purge.status === 200, `purge ngay phải 200, trả ${purge.status}`);
+		const gone = await api(`/files/${tempId}`);
+		assert(gone.status === 404, `file sau purge phải 404, trả ${gone.status}`);
+		return 'purge ngay OK (retention chỉ là mốc cron tự dọn)';
+	});
+
+	await storageStep('folders: purge ngay (thư mục rỗng)', async () => {
+		const created = await apiJson<{ folder: { id: string } }>('/folders', {
+			method: 'POST',
+			body: { name: `${PREFIX}purge-folder`, parentId: null },
+		});
+		const tempFolderId = created.folder.id;
+		const del = await api(`/folders/${tempFolderId}`, { method: 'DELETE' });
+		assert(del.status === 200, `delete folder trả ${del.status}`);
+		const purge = await api(`/folders/${tempFolderId}/purge`, { method: 'DELETE' });
+		assert(purge.status === 200, `purge folder ngay phải 200, trả ${purge.status}`);
+		const trash = await apiJson<{ folders: Array<{ id: string }> }>('/folders/trash');
+		assert(!trash.folders.some((item) => item.id === tempFolderId), 'folder đã purge không còn trong trash');
+		return 'purge folder ngay OK';
 	});
 
 	// ---------------------------------------------------------------- sharing

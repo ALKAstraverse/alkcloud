@@ -17,6 +17,7 @@ import {
 	moveFolder,
 	openFileUrl,
 	purgeFile,
+	purgeFolder,
 	renameFile,
 	renameFolder,
 	restoreFile,
@@ -588,7 +589,14 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 	};
 
 	const handlePurge = async (target: Target) => {
-		await runMutation(async () => void (await purgeFile(target.id)), 'Đã xoá vĩnh viễn', 'Không xoá được');
+		await runMutation(
+			async () => {
+				if (target.type === 'file') await purgeFile(target.id);
+				else await purgeFolder(target.id);
+			},
+			'Đã xoá vĩnh viễn',
+			'Không xoá được',
+		);
 	};
 
 	// ----------------------------------------------------------------- upload
@@ -1410,7 +1418,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 										<EmptyState
 											icon="trashCan"
 											title="Thùng rác trống"
-											description="Tệp và thư mục bạn xoá sẽ nằm ở đây 30 ngày trước khi bị xoá vĩnh viễn."
+											description="Tệp và thư mục bạn xoá sẽ nằm ở đây; tự động xoá vĩnh viễn sau 30 ngày hoặc xoá ngay bằng nút Xoá vĩnh viễn."
 											action={{ label: 'Về tệp của tôi', onClick: () => navigateTo('files'), icon: 'folder' }}
 										/>
 									) : (
@@ -1441,6 +1449,14 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														>
 															Khôi phục
 														</Button>
+														<Button
+															size="sm"
+															variant="danger-ghost"
+															icon="broom"
+															onClick={() => setDialog({ kind: 'purge', target: { type: 'folder', id: folder.id, name: folder.name } })}
+														>
+															Xoá vĩnh viễn
+														</Button>
 													</div>
 												</div>
 											))}
@@ -1452,7 +1468,6 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 											) : null}
 											{trashFiles.map((file) => {
 												const kind = fileKind(file.name, file.contentType);
-												const purgeable = Boolean(file.purgeAfter) && new Date(file.purgeAfter!).getTime() <= Date.now();
 												return (
 													<div key={file.id} className="file-list__row file-list__row--trash">
 														<span className={`file-list__icon ${kind.tone}`}>
@@ -1465,7 +1480,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 															</span>
 														</span>
 														<span className="file-list__meta">
-															{purgeable ? 'Có thể xoá vĩnh viễn' : formatRemaining(file.purgeAfter)}
+															{formatRemaining(file.purgeAfter)}
 														</span>
 														<div className="file-list__actions" style={{ opacity: 1 }}>
 															<Button
@@ -1476,16 +1491,14 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 															>
 																Khôi phục
 															</Button>
-															{purgeable ? (
-																<Button
-																	size="sm"
-																	variant="danger-ghost"
-																	icon="broom"
-																	onClick={() => setDialog({ kind: 'purge', target: { type: 'file', id: file.id, name: file.name } })}
-																>
-																	Xoá vĩnh viễn
-																</Button>
-															) : null}
+															<Button
+																size="sm"
+																variant="danger-ghost"
+																icon="broom"
+																onClick={() => setDialog({ kind: 'purge', target: { type: 'file', id: file.id, name: file.name } })}
+															>
+																Xoá vĩnh viễn
+															</Button>
 														</div>
 													</div>
 												);

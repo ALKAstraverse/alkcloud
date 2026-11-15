@@ -129,6 +129,7 @@ export type AuditAction =
 	| 'file.create'
 	| 'file.delete'
 	| 'file.purge'
+	| 'folder.purge'
 	| 'file.purge.pending'
 	| 'file.restore'
 	| 'file.rename'

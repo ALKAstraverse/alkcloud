@@ -5,6 +5,32 @@
 
 ---
 
+## [Unreleased] — 15/11/2026 — Thùng rác: xoá vĩnh viễn NGAY (file + folder)
+
+> Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `acce3937-190d-404a-9bbb-c55eccf0d8ad`
+> (15/11 UTC) · Worker `alkcloud-web` version `32588f05-9fd9-4f90-838a-cc1530fef235` ·
+> web entry `/app/DxeqQapH/` (bundle `index-DxeqQapH.js`).
+> **Không có migration** (chỉ logic route + client). Kiểm thử: `typecheck` PASS · `npm test`
+> **PASS=421 · FAIL=0** (122 suites) · `build` PASS · `check:limits` PASS ·
+> `check-production-health.sh` PASS · E2E production **PASS=22 · FAIL=0 · SKIP=0 · BLOCKED=0**.
+
+### Changed
+
+- **`DELETE /files/:id/purge`**: owner được xoá vĩnh viễn **ngay**, không còn bị `409` vì
+  `purge_after` chưa tới hạn 30 ngày. `purge_after` chỉ còn là mốc để cron tự dọn file bị bỏ quên
+  ⇒ thao tác có chủ đích không phải chờ.
+- **`DELETE /folders/:id/purge`** (mới): xoá vĩnh viễn **cả cây thư mục** đang ở trong thùng rác.
+  Từ chối `409` nếu còn file trong cây con (phải purge hết file trước) để tránh xoá mồ côi.
+  Audit action mới `folder.purge` (severity `data_change`).
+- **Web**: nút "Xoá vĩnh viễn" luôn hiện với file trong thùng rác (trước chỉ hiện khi quá hạn 30 ngày);
+  hàng thư mục trong thùng rác có thêm nút "Xoá vĩnh viễn" (icon + tooltip), hộp thoại xác nhận dùng
+  chung `PurgeConfirmDialog`; thông báo lỗi khi thư mục còn file hiển thị đúng số file.
+- **Verify**: thêm `apps/api/test/trash-purge-immediate.test.ts` (purge file ngay + purge folder
+  chặn-khi-còn-file/rồi-thành-công); `product-journey` bước 12 chuyển sang purge ngay + purge folder;
+  E2E production đổi bước "purge trước hạn 409" thành "purge ngay 200 → 404" và thêm "purge folder rỗng".
+
+---
+
 ## [Unreleased] — 15/11/2026 — Grid view: bỏ checkbox thường trực
 
 - Card lưới **không còn hiện checkbox mặc định**: checkbox nằm overlay góc trên-trái, chỉ hiện khi hover/focus, khi card được chọn, hoặc khi đang ở **chế độ chọn** (đã chọn ≥1 mục) — theo pattern Google Drive.

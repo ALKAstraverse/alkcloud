@@ -269,9 +269,8 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		assertCapability(mode, 'allowTrashPurge');
 		const file = await context.db.getFile(c.req.param('id'));
 		if (!file || !file.deletedAt) throw AppError.notFound('File không trong trash');
-		if (!file.purgeAfter || new Date(file.purgeAfter).getTime() > context.now().getTime()) {
-			throw AppError.conflict('Chưa tới hạn xóa vĩnh viễn');
-		}
+		// Owner được xoá vĩnh viễn NGAY, không cần chờ hết retention 30 ngày.
+		// `purge_after` chỉ là mốc để cron tự dọn — không phải điều kiện chặn.
 		const activeShares = await context.db.countActiveShares(file.id, context.now().toISOString());
 		if (activeShares > 0) {
 			throw AppError.conflict('Còn share đang hoạt động — thu hồi share trước khi xóa vĩnh viễn');
@@ -285,7 +284,7 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 
 		// AUD-02: đánh dấu `PURGING` **TRƯỚC** khi xoá object ⇒ restore chạy đồng
 		// thời bị từ chối (409) ⇒ không tạo được file "ma" (row còn, object đã mất).
-		const started = await context.db.markFilePurgeStarted(file.id, context.now().toISOString());
+		const started = await context.db.markFilePurgeStarted(file.id, context.now().toISOString(), true);
 		if (!started) {
 			throw AppError.conflict('File đang được xoá vĩnh viễn — không thao tác');
 		}
@@ -306,7 +305,7 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		// SEC-09: xoá có điều kiện — nếu file đã được restore (hoặc purge_after
 		// bị đổi) trong lúc request này đang chạy thì KHÔNG được xoá.
 		// Nếu xoá B2 xong mà D1 không xoá ⇒ mất file vĩnh viễn.
-		const deleted = await context.db.deleteFileRowIfStillTrashed(file.id, context.now().toISOString());
+		const deleted = await context.db.deleteFileRowIfStillTrashed(file.id, context.now().toISOString(), true);
 		if (!deleted) {
 			throw AppError.conflict('File đã được khôi phục hoặc thay đổi — không xoá vĩnh viễn');
 		}

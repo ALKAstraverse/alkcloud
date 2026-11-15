@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import type { AppContext } from '../context.js';
 import { recordAudit } from '../lib/audit.js';
 import { json, mapDbConflict, parseJsonBody } from '../lib/http.js';
-import { degradationHeaders } from '../lib/quota-guard.js';
+import { assertCapability, degradationHeaders } from '../lib/quota-guard.js';
 import { requireOwner, type AppEnv } from '../middleware/auth.js';
 
 const MAX_FOLDER_DEPTH = 32;
@@ -256,6 +256,33 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 			200,
 			degradationHeaders(mode),
 		);
+	});
+
+	app.delete('/:id/purge', async (c) => {
+		const auth = c.get('auth');
+		const mode = c.get('quotaMode');
+		assertCapability(mode, 'allowTrashPurge');
+		const folder = await context.db.getFolder(c.req.param('id'));
+		if (!folder || !folder.deletedAt) throw AppError.notFound('Thư mục không trong trash');
+		// Chỉ xoá vĩnh viễn khi cây con không còn file (đã purge từng file hoặc
+		// file đã bị xoá vĩnh viễn trước đó). Xoá cascade folder khi còn file sẽ
+		// khiến file mồ côi ở trash gốc — không bao giờ được purge.
+		const filesInSubtree = await context.db.countFilesInFolderSubtree(folder.id);
+		if (filesInSubtree > 0) {
+			throw AppError.conflict(`Còn ${filesInSubtree} tệp trong thư mục — xoá vĩnh viễn các tệp trước`);
+		}
+		const deleted = await context.db.deleteTrashedFolder(folder.id);
+		if (!deleted) {
+			throw AppError.conflict('Thư mục chưa thể xoá — còn tệp hoặc đã thay đổi');
+		}
+		await recordAudit(context, {
+			action: 'folder.purge',
+			actor: auth?.email ?? 'unknown',
+			targetType: 'folder',
+			targetId: folder.id,
+			ip: c.get('clientIp'),
+		});
+		return json({ ok: true, mode }, 200, degradationHeaders(mode));
 	});
 
 	return app;

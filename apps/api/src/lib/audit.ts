@@ -25,6 +25,7 @@ const SEVERITY_BY_ACTION: Record<AuditAction, AuditSeverity> = {
 	'file.create': 'data_change',
 	'file.delete': 'data_change',
 	'file.purge': 'data_change',
+	'folder.purge': 'data_change',
 	'file.purge.pending': 'data_change',
 	'file.restore': 'data_change',
 	'file.rename': 'data_change',

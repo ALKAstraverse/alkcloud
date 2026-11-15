@@ -358,6 +358,10 @@ export async function purgeFile(id: string): Promise<void> {
 	await apiRequest(`/files/${encodeURIComponent(id)}/purge`, { method: 'DELETE' });
 }
 
+export async function purgeFolder(id: string): Promise<void> {
+	await apiRequest(`/folders/${encodeURIComponent(id)}/purge`, { method: 'DELETE' });
+}
+
 export async function listTrash(): Promise<{ files: FileEntry[]; retentionDays: number }> {
 	return apiRequest('/files/trash');
 }
