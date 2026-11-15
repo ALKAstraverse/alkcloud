@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import {
 	ApiError,
 	createFolder,
@@ -94,6 +94,50 @@ const SORT_DEFAULT_DIR: Record<SortKey, SortDir> = { name: 'asc', modified: 'des
 /** Thiết bị cảm ứng: chạm một lần vào tên để mở (như Google Drive mobile). */
 function isTouchPointer() {
 	return window.matchMedia('(pointer: coarse)').matches;
+}
+
+/**
+ * Nhấn giữ trên touch để vào chế độ chọn (như Google Drive mobile).
+ * Trả về handler cho card + `consume()` để nuốt click phát sinh sau khi nhấn giữ
+ * (tránh vừa chọn vừa mở file).
+ */
+function useLongPress(onLongPress: () => void) {
+	const timer = useRef<number | null>(null);
+	const fired = useRef(false);
+	const cancel = useCallback(() => {
+		if (timer.current !== null) {
+			window.clearTimeout(timer.current);
+			timer.current = null;
+		}
+	}, []);
+	useEffect(() => cancel, [cancel]);
+	const onPointerDown = useCallback(
+		(event: ReactPointerEvent<HTMLElement>) => {
+			if (event.pointerType !== 'touch') return;
+			if ((event.target as HTMLElement).closest('.file-card__check, .file-card__actions')) return;
+			cancel();
+			fired.current = false;
+			timer.current = window.setTimeout(() => {
+				timer.current = null;
+				fired.current = true;
+				navigator.vibrate?.(10);
+				onLongPress();
+			}, 450);
+		},
+		[cancel, onLongPress],
+	);
+	const consume = useCallback(() => {
+		const wasFired = fired.current;
+		fired.current = false;
+		return wasFired;
+	}, []);
+	return {
+		onPointerDown,
+		onPointerUp: cancel,
+		onPointerLeave: cancel,
+		onPointerCancel: cancel,
+		consume,
+	};
 }
 
 function readStored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
@@ -1039,7 +1083,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														<span className="manager__section-title">Thư mục</span>
 														<span className="manager__section-count">{sortedFolders.length}</span>
 													</div>
-													<div className="file-grid">
+													<div className="file-grid" data-selection={selected.size > 0 ? 'true' : 'false'}>
 														{sortedFolders.map((folder) => (
 															<FolderCard
 																key={folder.id}
@@ -1083,7 +1127,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														<span className="manager__section-title">Tệp</span>
 														<span className="manager__section-count">{sortedFiles.length}</span>
 													</div>
-													<div className="file-grid">
+													<div className="file-grid" data-selection={selected.size > 0 ? 'true' : 'false'}>
 														{sortedFiles.map((file) => (
 															<FileCard
 																key={file.id}
@@ -1565,12 +1609,21 @@ function FolderCard({
 	onToggle: () => void;
 	menuItems: React.ComponentProps<typeof Menu>['items'];
 }) {
+	const longPress = useLongPress(onToggle);
 	return (
 		<article
 			className="file-card"
 			data-selected={selected}
 			tabIndex={0}
+			onPointerDown={longPress.onPointerDown}
+			onPointerUp={longPress.onPointerUp}
+			onPointerLeave={longPress.onPointerLeave}
+			onPointerCancel={longPress.onPointerCancel}
 			onClick={(event) => {
+				if (longPress.consume()) {
+					event.preventDefault();
+					return;
+				}
 				const onBody = (event.target as HTMLElement).closest('.file-card__open');
 				if (onBody && isTouchPointer() && event.detail === 1) {
 					event.stopPropagation();
@@ -1600,7 +1653,7 @@ function FolderCard({
 				/>
 			</div>
 			<div className="file-card__top">
-				<label className="file-card__check checkbox--tap" onClick={(event) => event.stopPropagation()}>
+				<label className="file-card__check" onClick={(event) => event.stopPropagation()}>
 					<input
 						type="checkbox"
 						checked={selected}
@@ -1638,12 +1691,21 @@ function FileCard({
 	menuItems: React.ComponentProps<typeof Menu>['items'];
 }) {
 	const kind = fileKind(file.name, file.contentType);
+	const longPress = useLongPress(onToggle);
 	return (
 		<article
 			className="file-card"
 			data-selected={selected}
 			tabIndex={0}
+			onPointerDown={longPress.onPointerDown}
+			onPointerUp={longPress.onPointerUp}
+			onPointerLeave={longPress.onPointerLeave}
+			onPointerCancel={longPress.onPointerCancel}
 			onClick={(event) => {
+				if (longPress.consume()) {
+					event.preventDefault();
+					return;
+				}
 				const onBody = (event.target as HTMLElement).closest('.file-card__open');
 				if (onBody && isTouchPointer() && event.detail === 1) {
 					event.stopPropagation();
@@ -1673,7 +1735,7 @@ function FileCard({
 				/>
 			</div>
 			<div className="file-card__top">
-				<label className="file-card__check checkbox--tap" onClick={(event) => event.stopPropagation()}>
+				<label className="file-card__check" onClick={(event) => event.stopPropagation()}>
 					<input type="checkbox" checked={selected} aria-label={`Chọn tệp ${file.name}`} onChange={onToggle} />
 				</label>
 				<div className="file-card__open">

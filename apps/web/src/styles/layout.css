@@ -506,21 +506,6 @@
 	transform: translateY(0);
 }
 
-.file-card__check {
-	position: absolute;
-	top: var(--space-3);
-	left: var(--space-3);
-	z-index: 2;
-	opacity: 0;
-	transition: opacity var(--dur-fast) var(--ease-out);
-}
-
-.file-card:hover .file-card__check,
-.file-card:focus-within .file-card__check,
-.file-card[data-selected='true'] .file-card__check {
-	opacity: 1;
-}
-
 /* --- list --- */
 .file-list {
 	background: var(--surface);
@@ -1877,13 +1862,22 @@
 	text-align: left;
 }
 
-/* Checkbox chọn: hiện khi hover/đã chọn, giữ chỗ để card không nhảy. */
+/* Checkbox chọn trong card lưới: overlay góc trên-trái (kiểu Google Drive).
+   Ẩn mặc định; hiện khi hover/focus, khi card đã chọn, hoặc khi đang ở chế độ chọn
+   (bất kỳ mục nào được chọn) — trên touch vào chế độ chọn bằng nhấn giữ. */
 .file-card__check {
-	position: static;
+	position: absolute;
+	top: var(--space-1);
+	left: var(--space-1);
+	z-index: 3;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
+	/* Vùng bấm ≥24px (WCAG 2.5.8) nhưng không chiếm chỗ trong layout. */
+	width: 32px;
+	height: 32px;
 	opacity: 0;
+	pointer-events: none;
 	transition: opacity var(--dur-fast) var(--ease-out);
 }
 
@@ -1895,6 +1889,7 @@
 	border: 1.5px solid var(--border-strong);
 	border-radius: var(--radius-xs);
 	background: var(--surface);
+	box-shadow: var(--shadow-xs);
 	display: inline-grid;
 	place-content: center;
 	cursor: pointer;
@@ -1924,13 +1919,21 @@
 	outline: none;
 }
 
-.file-card[data-selected='true'] .file-card__check {
+.file-card:hover .file-card__check,
+.file-card:focus-within .file-card__check,
+.file-card[data-selected='true'] .file-card__check,
+.file-grid[data-selection='true'] .file-card__check {
 	opacity: 1;
+	pointer-events: auto;
 }
 
-/* Hàng card: checkbox + nội dung. */
+/* Hàng card: nội dung (checkbox đã tách ra overlay). */
 .file-card {
 	padding: var(--space-4);
+	/* Nhấn giữ để chọn trên touch: không bôi đen chữ / không mở callout. */
+	-webkit-touch-callout: none;
+	user-select: none;
+	touch-action: manipulation;
 }
 
 .file-card__top {
@@ -1983,24 +1986,7 @@
 	color: #101828;
 }
 
-.file-card__check {
-	padding-top: 12px;
-	flex: none;
-	/* Vùng bấm ≥24px, giữ nguyên vị trí hiển thị. */
-	padding-left: var(--space-3);
-	padding-right: var(--space-3);
-	margin-left: calc(-1 * var(--space-3));
-	margin-right: calc(-1 * var(--space-3));
-}
-
 .file-card__top .file-card__open {
 	flex: 1;
 	min-width: 0;
-}
-
-/* Thiết bị cảm ứng không có hover ⇒ checkbox phải luôn hiện để chọn được. */
-@media (hover: none), (max-width: 767px) {
-	.file-card__check {
-		opacity: 1;
-	}
 }

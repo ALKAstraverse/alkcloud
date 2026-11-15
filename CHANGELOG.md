@@ -1,7 +1,16 @@
 # CHANGELOG — AlkCloud
 
 > Ghi lại các thay đổi **có ảnh hưởng tới hành vi hoặc vận hành**.
-> Mỗi mục có mã commit để tra ngược. Bằng chứng chi tiết: `docs/19-verification-ledger.md`.
+> Mỗi mục có mã commit để tra ngược. Bằng chứng chi tiết: lịch sử commit + test tự động.
+
+---
+
+## [Unreleased] — 15/11/2026 — Grid view: bỏ checkbox thường trực
+
+- Card lưới **không còn hiện checkbox mặc định**: checkbox nằm overlay góc trên-trái, chỉ hiện khi hover/focus, khi card được chọn, hoặc khi đang ở **chế độ chọn** (đã chọn ≥1 mục) — theo pattern Google Drive.
+- **Touch**: nhấn giữ ~450 ms trên card để vào chế độ chọn (rung nhẹ nếu máy hỗ trợ); chạm 1 lần vẫn mở file/thư mục như cũ ⇒ vẫn chọn được trên điện thoại (giữ fix BUG-31).
+- Vùng bấm checkbox **32×32** (WCAG 2.5.8) nhưng không chiếm chỗ trong layout; card tắt bôi đen chữ/callout khi nhấn giữ.
+- Verify: `typecheck` + **419 test PASS** + `vite build` PASS; kiểm tra ảnh light/dark.
 
 ---
 
