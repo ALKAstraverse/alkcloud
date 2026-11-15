@@ -685,6 +685,26 @@
 
 .drive__check {
 	justify-content: center;
+	/* Vùng bấm checkbox trong bảng ≥24px (WCAG 2.5.8). */
+	padding-top: var(--space-3);
+	padding-bottom: var(--space-3);
+	margin-top: calc(-1 * var(--space-3));
+	margin-bottom: calc(-1 * var(--space-3));
+}
+
+/* Ô tiêu đề cột: role=columnheader bọc nút sắp xếp. */
+.drive__th {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+}
+
+.drive__th > .drive__sort {
+	flex: 1;
+}
+
+.drive__th--check {
+	justify-content: center;
 }
 
 .drive__sort {
@@ -830,6 +850,13 @@
 .drive__row:focus-within .drive__actions,
 .drive__row[data-selected='true'] .drive__actions {
 	opacity: 1;
+}
+
+/* Thiết bị cảm ứng không có hover ⇒ nút thao tác luôn hiện. */
+@media (hover: none), (max-width: 1023px) {
+	.drive__actions {
+		opacity: 1;
+	}
 }
 
 .drive__actions .btn {
@@ -1589,6 +1616,18 @@
 @media (max-width: 1023px) {
 	.shell__sidebar {
 		box-shadow: none;
+		/* Drawer đóng phải rời khỏi tab order và accessibility tree. */
+		visibility: hidden;
+		transition:
+			transform var(--dur-base) var(--ease-out),
+			visibility 0s linear var(--dur-base);
+	}
+
+	.shell__sidebar[data-open='true'] {
+		visibility: visible;
+		transition:
+			transform var(--dur-base) var(--ease-out),
+			visibility 0s;
 	}
 
 	.shell__main {
@@ -1947,9 +1986,21 @@
 .file-card__check {
 	padding-top: 12px;
 	flex: none;
+	/* Vùng bấm ≥24px, giữ nguyên vị trí hiển thị. */
+	padding-left: var(--space-3);
+	padding-right: var(--space-3);
+	margin-left: calc(-1 * var(--space-3));
+	margin-right: calc(-1 * var(--space-3));
 }
 
 .file-card__top .file-card__open {
 	flex: 1;
 	min-width: 0;
+}
+
+/* Thiết bị cảm ứng không có hover ⇒ checkbox phải luôn hiện để chọn được. */
+@media (hover: none), (max-width: 767px) {
+	.file-card__check {
+		opacity: 1;
+	}
 }

@@ -5,6 +5,47 @@
 
 ---
 
+## [Unreleased] — Phase 8 (15/11/2026) — HOÀN THIỆN TRẢI NGHIỆM NGƯỜI DÙNG (CHƯA DEPLOY)
+
+> Trạng thái: **CHƯA DEPLOY** — thay đổi chỉ nằm trong working tree. Đã kiểm thử thật trên stack local
+> (Vite HTTPS + `wrangler dev` + s3rver + relay), **không ghi dữ liệu test lên production**.
+> Regression: `typecheck` PASS · `399/399 test` PASS · `build` PASS · `check:web` PASS · `check:limits` PASS ·
+> `verify:all` **PASS=22 · FAIL=0 · SKIP=1 · BLOCKED=1** (SKIP/BLOCKED: B2 cần credential thật từ owner).
+> Browser test 7 viewport (360 → 1920) + lượt touch: **0 issue · 0 console error** · 163 ảnh.
+> Bằng chứng: `docs/45-USER-EXPERIENCE-AUDIT.md` · `docs/46-UX-FIXES-AND-IMPROVEMENTS.md` · `docs/47-BROWSER-TEST-REPORT.md`.
+
+### Added
+
+| Hạng mục | Nội dung | Tài liệu |
+| :--- | :--- | :--- |
+| **Skip-link** | `<a class="skip-link" href="#main-content">` + `<main id="main-content" tabIndex={-1}>` — bàn phím bỏ qua menu | `docs/46` §4.4 |
+| **ARIA bảng đầy đủ** | `.drive` → `role=table` + `aria-label`; `columnheader` + `aria-sort`; `role=cell` cho từng ô (18 hàng / 85 ô) | `docs/46` §3.4 |
+| **Điều hướng menu bằng bàn phím** | `Menu` + `ContextMenu`: focus mục đầu khi mở, `↑ ↓ Home End`, `Esc` trả focus về trigger, `aria-haspopup/expanded/controls` | `docs/46` §4.1 |
+| **Audit tự động 12 nhóm** | Harness Playwright (ngoài repo): tràn ngang, vùng bấm ≥24px, tương phản WCAG, `h1`, id trùng, nhãn form, ARIA parent, tab-stop ẩn | `docs/45` §1.2 |
+
+### Fixed
+
+| ID | Lỗi | Mức độ |
+| :--- | :--- | :--- |
+| BUG-25 | Drawer mobile khi đóng vẫn nằm trong tab order (focus rơi vào menu ở `x = −252`) | Cao |
+| BUG-26 | Thiếu `<h1>` ở 3 view (Tệp / Thùng rác / Cài đặt) | Trung bình |
+| BUG-27 | Vùng bấm checkbox 32×16 (< 24px theo WCAG 2.5.8) | Trung bình |
+| BUG-28 | Tương phản `--text-muted` 4.45:1 trên dòng đã chọn (< 4.5:1) | Trung bình |
+| BUG-29 | `role="row"` không có parent `role="table"` ⇒ ARIA không hợp lệ | Trung bình |
+| BUG-30 | Nút **⋮** không hiện ở tablet 768px / thiết bị touch (chỉ mở khi hover) | Trung bình |
+| BUG-31 | Checkbox trong card lưới `opacity: 0` trên touch ⇒ không chọn được trên điện thoại | Trung bình |
+| BUG-32 | Nút "Tải lại" rơi xuống dòng riêng ở 768px (nằm ngoài nhóm công cụ) | Thấp |
+
+### Changed
+
+| Hạng mục | Nội dung | Tài liệu |
+| :--- | :--- | :--- |
+| **Token `--text-muted`** | Light theme `#667085` → `#616b80` (≥4.79:1 trên mọi nền); dark theme không đổi | `docs/46` §3.3 |
+| **Token bấm trên touch** | Chạm 1 lần vào tên (bảng) / thân card (lưới) để mở, như Google Drive mobile; bấm đúp bị chặn trên touch | `docs/46` §4.5 |
+| **Bundle web** | P8: `index-7h2CnH3r.js` 366.11 kB (gzip **111.95 kB**), `index-Cg-zTtgA.css` 56.55 kB (gzip 10.39 kB) | `docs/14` §1 |
+
+---
+
 ## [Unreleased] — Phase 7 (14/11/2026) — DEPLOY WEB (REDESIGN UI/UX)
 
 > Trạng thái: **WEB ĐÃ DEPLOY PRODUCTION**. Worker `alkcloud-web` version `00f603d9-c28c-4ab9-8543-6bbd2f1a69c9` (14/11 16:48 UTC — Phase 7.3);

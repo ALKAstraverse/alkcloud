@@ -48,7 +48,8 @@
 
 	--text: #101828;
 	--text-secondary: #475467;
-	--text-muted: #667085;
+	/* #616b80: ≥4.79:1 trên --accent-soft (dòng đã chọn) — đạt WCAG AA. */
+	--text-muted: #616b80;
 	--text-inverse: #ffffff;
 
 	--accent: var(--brand-600);

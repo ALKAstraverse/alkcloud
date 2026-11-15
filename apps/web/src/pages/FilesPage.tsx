@@ -91,6 +91,11 @@ const MAX_PARALLEL_UPLOADS = 3;
 /** Chiều mặc định của từng kiểu sắp xếp (giống Google Drive). */
 const SORT_DEFAULT_DIR: Record<SortKey, SortDir> = { name: 'asc', modified: 'desc', size: 'desc' };
 
+/** Thiết bị cảm ứng: chạm một lần vào tên để mở (như Google Drive mobile). */
+function isTouchPointer() {
+	return window.matchMedia('(pointer: coarse)').matches;
+}
+
 function readStored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
 	try {
 		const value = window.localStorage.getItem(key);
@@ -145,11 +150,19 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 	const [dragging, setDragging] = useState(false);
 
 	const [dialog, setDialog] = useState<DialogState>({ kind: 'none' });
-	const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: Target } | null>(null);
+	const [contextMenu, setContextMenu] = useState<{
+		x: number;
+		y: number;
+		target: Target;
+		source: HTMLElement | null;
+	} | null>(null);
 	const [queue, setQueue] = useState<UploadQueueItem[]>([]);
 	const [queueOpen, setQueueOpen] = useState(true);
 
 	const fileInput = useRef<HTMLInputElement>(null);
+	const navButtonRef = useRef<HTMLButtonElement>(null);
+	const navRef = useRef<HTMLElement>(null);
+	const navWasOpen = useRef(false);
 	const dragDepth = useRef(0);
 	const filesRef = useRef(new Map<string, File>());
 	const controllers = useRef(new Map<string, AbortController>());
@@ -208,6 +221,18 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 		};
 		document.addEventListener('keydown', onKey);
 		return () => document.removeEventListener('keydown', onKey);
+	}, [mobileNav]);
+
+	// Drawer mobile: mở ⇒ đưa tiêu điểm vào menu; đóng ⇒ trả tiêu điểm về nút mở.
+	useEffect(() => {
+		if (mobileNav) {
+			navWasOpen.current = true;
+			navRef.current?.querySelector<HTMLElement>('.side-nav__item')?.focus({ preventScroll: true });
+			return;
+		}
+		if (!navWasOpen.current) return;
+		navWasOpen.current = false;
+		navButtonRef.current?.focus({ preventScroll: true });
 	}, [mobileNav]);
 
 	// --------------------------------------------------------------- derived
@@ -405,9 +430,13 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 	const openContextMenu = (event: React.MouseEvent, target: Target) => {
 		event.preventDefault();
 		event.stopPropagation();
-		setContextMenu({ x: event.clientX, y: event.clientY, target });
+		setContextMenu({
+			x: event.clientX,
+			y: event.clientY,
+			target,
+			source: event.currentTarget as HTMLElement,
+		});
 	};
-
 	const contextMenuItems = useMemo((): MenuItem[] => {
 		if (!contextMenu) return [];
 		const { type, id, name } = contextMenu.target;
@@ -668,6 +697,9 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 
 	return (
 		<div className="shell">
+			<a className="skip-link" href="#main-content">
+				Bỏ qua tới nội dung chính
+			</a>
 			<button
 				type="button"
 				className="shell__scrim"
@@ -675,7 +707,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 				hidden={!mobileNav}
 				onClick={() => setMobileNav(false)}
 			/>
-			<aside className="shell__sidebar" data-open={mobileNav ? 'true' : 'false'}>
+			<aside ref={navRef} className="shell__sidebar" data-open={mobileNav ? 'true' : 'false'}>
 				<div className="brand">
 					<span className="brand__mark">
 						<Icon name="cloud" />
@@ -688,7 +720,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 					</span>
 				</div>
 
-				<nav className="side-nav" aria-label="Điều hướng chính">
+				<nav id="app-navigation" className="side-nav" aria-label="Điều hướng chính">
 					<button
 						type="button"
 						className="side-nav__item"
@@ -761,13 +793,16 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 			<div className="shell__main">
 				<header className="topbar">
 					<IconButton
+						ref={navButtonRef}
 						icon="bars"
 						label="Mở menu điều hướng"
 						className="topbar__menu"
+						aria-expanded={mobileNav}
+						aria-controls="app-navigation"
 						onClick={() => setMobileNav(true)}
 					/>
 					<div className="topbar__context">
-						<span className="topbar__title truncate">{title}</span>
+						<h1 className="topbar__title truncate">{title}</h1>
 						<span className="topbar__subtitle truncate">{subtitle}</span>
 					</div>
 					<div className="topbar__actions">
@@ -799,6 +834,8 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 				</header>
 
 				<main
+					id="main-content"
+					tabIndex={-1}
 					className="shell__content"
 					onDragEnter={onDragEnter}
 					onDragOver={(event) => {
@@ -839,6 +876,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 												type="file"
 												multiple
 												hidden
+												aria-label="Chọn tệp để tải lên"
 												onChange={(event) => {
 													const list = event.target.files;
 													if (list) enqueue(Array.from(list));
@@ -864,6 +902,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 													type="button"
 													className="segmented__option"
 													aria-pressed={layout === 'grid'}
+													aria-label="Dạng lưới"
 													title="Dạng lưới"
 													onClick={() => {
 														setLayout('grid');
@@ -876,6 +915,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 													type="button"
 													className="segmented__option"
 													aria-pressed={layout === 'list'}
+													aria-label="Dạng danh sách"
 													title="Dạng danh sách"
 													onClick={() => {
 														setLayout('list');
@@ -944,12 +984,12 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 												},
 											]}
 										/>
+											<IconButton
+												icon="arrowRotateRight"
+												label="Tải lại danh sách"
+												onClick={() => void refresh()}
+											/>
 										</div>
-										<IconButton
-											icon="arrowRotateRight"
-											label="Tải lại danh sách"
-											onClick={() => void refresh()}
-										/>
 									</div>
 
 									{breadcrumb.length > 0 && !query ? (
@@ -1089,9 +1129,10 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 											) : null}
 										</>
 									) : (
-										<div className="drive">
-											<div className="drive__head" role="row">
-												<label className="checkbox drive__check">
+									<div className="drive" role="table" aria-label="Tệp và thư mục">
+										<div className="drive__head" role="row">
+											<span role="columnheader" className="drive__th drive__th--check">
+												<label className="checkbox checkbox--tap drive__check">
 													<input
 														type="checkbox"
 														checked={allSelected}
@@ -1099,6 +1140,12 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														onChange={toggleSelectAll}
 													/>
 												</label>
+											</span>
+											<span
+												role="columnheader"
+												className="drive__th"
+												aria-sort={sort === 'name' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+											>
 												<button
 													type="button"
 													className="drive__sort"
@@ -1110,6 +1157,12 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														<Icon name={sortDir === 'asc' ? 'chevronUp' : 'chevronDown'} className="drive__sort-icon" />
 													) : null}
 												</button>
+											</span>
+											<span
+												role="columnheader"
+												className="drive__th"
+												aria-sort={sort === 'modified' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+											>
 												<button
 													type="button"
 													className="drive__sort"
@@ -1121,6 +1174,12 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														<Icon name={sortDir === 'asc' ? 'chevronUp' : 'chevronDown'} className="drive__sort-icon" />
 													) : null}
 												</button>
+											</span>
+											<span
+												role="columnheader"
+												className="drive__th"
+												aria-sort={sort === 'size' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+											>
 												<button
 													type="button"
 													className="drive__sort drive__sort--right"
@@ -1132,18 +1191,28 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														<Icon name={sortDir === 'asc' ? 'chevronUp' : 'chevronDown'} className="drive__sort-icon" />
 													) : null}
 												</button>
-												<span className="drive__head-tail" />
-											</div>
-											{sortedFolders.map((folder) => (
+											</span>
+											<span role="columnheader" className="drive__th drive__th--tail" />
+										</div>
+										{sortedFolders.map((folder) => (
 												<div
 													key={folder.id}
 													className="drive__row"
 													role="row"
 													tabIndex={0}
 													data-selected={selected.has(`folder:${folder.id}`)}
-													onClick={() => toggleSelect('folder', folder.id)}
+													onClick={(event) => {
+														const onName = (event.target as HTMLElement).closest('.drive__name');
+														if (onName && isTouchPointer() && event.detail === 1) {
+															event.stopPropagation();
+															enterFolder(folder);
+															return;
+														}
+														toggleSelect('folder', folder.id);
+													}}
 													onDoubleClick={(event) => {
 														event.stopPropagation();
+														if (isTouchPointer()) return;
 														enterFolder(folder);
 													}}
 													onKeyDown={(event) => {
@@ -1156,7 +1225,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														openContextMenu(event, { type: 'folder', id: folder.id, name: folder.name })
 													}
 												>
-													<label className="checkbox drive__check" onClick={(event) => event.stopPropagation()}>
+													<label role="cell" className="checkbox checkbox--tap drive__check" onClick={(event) => event.stopPropagation()}>
 														<input
 															type="checkbox"
 															checked={selected.has(`folder:${folder.id}`)}
@@ -1164,7 +1233,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 															onChange={() => toggleSelect('folder', folder.id)}
 														/>
 													</label>
-													<span className="drive__name" title="Bấm đúp để mở thư mục">
+													<span role="cell" className="drive__name" title="Bấm đúp để mở thư mục">
 														<span className="drive__icon tone-folder">
 															<Icon name="folder" />
 														</span>
@@ -1176,9 +1245,9 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 															</span>
 														</span>
 													</span>
-													<span className="drive__cell drive__cell--modified">{formatRelative(folder.createdAt)}</span>
-													<span className="drive__cell drive__cell--size">—</span>
-													<div className="drive__actions" onClick={(event) => event.stopPropagation()}>
+													<span role="cell" className="drive__cell drive__cell--modified">{formatRelative(folder.createdAt)}</span>
+													<span role="cell" className="drive__cell drive__cell--size">—</span>
+													<div role="cell" className="drive__actions" onClick={(event) => event.stopPropagation()}>
 														<Menu
 															label={`Thao tác cho ${folder.name}`}
 															trigger={({ toggle }) => (
@@ -1198,9 +1267,18 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														role="row"
 														tabIndex={0}
 														data-selected={selected.has(`file:${file.id}`)}
-														onClick={() => toggleSelect('file', file.id)}
+														onClick={(event) => {
+															const onName = (event.target as HTMLElement).closest('.drive__name');
+															if (onName && isTouchPointer() && event.detail === 1) {
+																event.stopPropagation();
+																void openFile(file);
+																return;
+															}
+															toggleSelect('file', file.id);
+														}}
 														onDoubleClick={(event) => {
 															event.stopPropagation();
+															if (isTouchPointer()) return;
 															void openFile(file);
 														}}
 														onKeyDown={(event) => {
@@ -1213,7 +1291,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 															openContextMenu(event, { type: 'file', id: file.id, name: file.name })
 														}
 													>
-														<label className="checkbox drive__check" onClick={(event) => event.stopPropagation()}>
+														<label role="cell" className="checkbox checkbox--tap drive__check" onClick={(event) => event.stopPropagation()}>
 															<input
 																type="checkbox"
 																checked={selected.has(`file:${file.id}`)}
@@ -1221,7 +1299,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 																onChange={() => toggleSelect('file', file.id)}
 															/>
 														</label>
-														<span className="drive__name" title="Bấm đúp để tải xuống">
+														<span role="cell" className="drive__name" title="Bấm đúp để tải xuống">
 															<span className={`drive__icon ${kind.tone}`}>
 																<Icon name={kind.icon} />
 															</span>
@@ -1233,9 +1311,9 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 																</span>
 															</span>
 														</span>
-														<span className="drive__cell drive__cell--modified">{formatRelative(file.updatedAt)}</span>
-														<span className="drive__cell drive__cell--size">{formatBytes(file.size)}</span>
-														<div className="drive__actions" onClick={(event) => event.stopPropagation()}>
+														<span role="cell" className="drive__cell drive__cell--modified">{formatRelative(file.updatedAt)}</span>
+														<span role="cell" className="drive__cell drive__cell--size">{formatBytes(file.size)}</span>
+														<div role="cell" className="drive__actions" onClick={(event) => event.stopPropagation()}>
 															<Menu
 																label={`Thao tác cho ${file.name}`}
 																trigger={({ toggle }) => (
@@ -1418,6 +1496,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 					y={contextMenu.y}
 					label={`Thao tác cho ${contextMenu.target.name}`}
 					items={contextMenuItems}
+					returnFocus={contextMenu.source}
 					onClose={() => setContextMenu(null)}
 				/>
 			) : null}
@@ -1489,9 +1568,18 @@ function FolderCard({
 			className="file-card"
 			data-selected={selected}
 			tabIndex={0}
-			onClick={onToggle}
+			onClick={(event) => {
+				const onBody = (event.target as HTMLElement).closest('.file-card__open');
+				if (onBody && isTouchPointer() && event.detail === 1) {
+					event.stopPropagation();
+					onOpen();
+					return;
+				}
+				onToggle();
+			}}
 			onDoubleClick={(event) => {
 				event.stopPropagation();
+				if (isTouchPointer()) return;
 				onOpen();
 			}}
 			onKeyDown={(event) => {
@@ -1510,7 +1598,7 @@ function FolderCard({
 				/>
 			</div>
 			<div className="file-card__top">
-				<label className="file-card__check" onClick={(event) => event.stopPropagation()}>
+				<label className="file-card__check checkbox--tap" onClick={(event) => event.stopPropagation()}>
 					<input
 						type="checkbox"
 						checked={selected}
@@ -1553,9 +1641,18 @@ function FileCard({
 			className="file-card"
 			data-selected={selected}
 			tabIndex={0}
-			onClick={onToggle}
+			onClick={(event) => {
+				const onBody = (event.target as HTMLElement).closest('.file-card__open');
+				if (onBody && isTouchPointer() && event.detail === 1) {
+					event.stopPropagation();
+					onOpen();
+					return;
+				}
+				onToggle();
+			}}
 			onDoubleClick={(event) => {
 				event.stopPropagation();
+				if (isTouchPointer()) return;
 				onOpen();
 			}}
 			onKeyDown={(event) => {
@@ -1574,7 +1671,7 @@ function FileCard({
 				/>
 			</div>
 			<div className="file-card__top">
-				<label className="file-card__check" onClick={(event) => event.stopPropagation()}>
+				<label className="file-card__check checkbox--tap" onClick={(event) => event.stopPropagation()}>
 					<input type="checkbox" checked={selected} aria-label={`Chọn tệp ${file.name}`} onChange={onToggle} />
 				</label>
 				<div className="file-card__open">

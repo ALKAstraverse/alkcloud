@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Icon } from './Icon.js';
 import type { MenuItem } from './Menu.js';
 
@@ -10,6 +10,8 @@ export interface ContextMenuProps {
 	/** Nhãn trợ năng của menu. */
 	label: string;
 	onClose: () => void;
+	/** Element nhận lại tiêu điểm khi menu đóng (hàng được bấm chuột phải). */
+	returnFocus?: HTMLElement | null;
 }
 
 const MENU_WIDTH = 220;
@@ -22,9 +24,15 @@ const EDGE_PADDING = 8;
  * Vị trí được chặn trong viewport để menu không bị tràn ra ngoài màn hình
  * (đo kích thước thật sau khi render, fallback dùng ước lượng).
  */
-export function ContextMenu({ x, y, items, label, onClose }: ContextMenuProps) {
+export function ContextMenu({ x, y, items, label, onClose, returnFocus }: ContextMenuProps) {
 	const rootRef = useRef<HTMLDivElement>(null);
 	const [position, setPosition] = useState({ left: x, top: y });
+
+	/** Escape ⇒ đóng và trả tiêu điểm về hàng đã bấm chuột phải. */
+	const closeWithFocus = useCallback(() => {
+		onClose();
+		returnFocus?.focus({ preventScroll: true });
+	}, [onClose, returnFocus]);
 
 	useLayoutEffect(() => {
 		const node = rootRef.current;
@@ -38,12 +46,18 @@ export function ContextMenu({ x, y, items, label, onClose }: ContextMenuProps) {
 		});
 	}, [x, y]);
 
+	// Mở menu ⇒ đưa tiêu điểm vào mục đầu tiên để điều hướng bằng bàn phím.
+	useEffect(() => {
+		const first = rootRef.current?.querySelector<HTMLButtonElement>('.menu__item:not([disabled])');
+		first?.focus({ preventScroll: true });
+	}, []);
+
 	useEffect(() => {
 		const onPointerDown = (event: MouseEvent) => {
 			if (!rootRef.current?.contains(event.target as Node)) onClose();
 		};
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') onClose();
+			if (event.key === 'Escape') closeWithFocus();
 		};
 		const onBlur = () => onClose();
 		document.addEventListener('mousedown', onPointerDown);
@@ -56,7 +70,36 @@ export function ContextMenu({ x, y, items, label, onClose }: ContextMenuProps) {
 			window.removeEventListener('blur', onBlur);
 			window.removeEventListener('resize', onBlur);
 		};
-	}, [onClose]);
+	}, [onClose, closeWithFocus]);
+
+	const onMenuKeyDown = (event: React.KeyboardEvent) => {
+		const options = Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>('.menu__item:not([disabled])') ?? []);
+		if (options.length === 0) return;
+		const index = options.indexOf(document.activeElement as HTMLButtonElement);
+		switch (event.key) {
+			case 'ArrowDown':
+				event.preventDefault();
+				options[(index + 1 + options.length) % options.length]?.focus();
+				break;
+			case 'ArrowUp':
+				event.preventDefault();
+				options[(index - 1 + options.length) % options.length]?.focus();
+				break;
+			case 'Home':
+				event.preventDefault();
+				options[0]?.focus();
+				break;
+			case 'End':
+				event.preventDefault();
+				options[options.length - 1]?.focus();
+				break;
+			case 'Tab':
+				onClose();
+				break;
+			default:
+				break;
+		}
+	};
 
 	return (
 		<div
@@ -64,6 +107,7 @@ export function ContextMenu({ x, y, items, label, onClose }: ContextMenuProps) {
 			className="context-menu"
 			role="menu"
 			aria-label={label}
+			onKeyDown={onMenuKeyDown}
 			style={{ left: position.left, top: position.top, minWidth: MENU_WIDTH }}
 		>
 			{items.map((item) =>

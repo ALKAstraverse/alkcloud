@@ -342,10 +342,19 @@
 	display: inline-flex;
 	align-items: center;
 	gap: var(--space-4);
+	min-height: 24px;
 	cursor: pointer;
 	font-size: var(--text-sm);
 	color: var(--text-secondary);
 	user-select: none;
+}
+
+/* Checkbox chỉ có icon: mở rộng vùng bấm lên ≥24px mà không đổi bố cục. */
+.checkbox--tap {
+	padding-left: var(--space-3);
+	padding-right: var(--space-3);
+	margin-left: calc(-1 * var(--space-3));
+	margin-right: calc(-1 * var(--space-3));
 }
 
 .checkbox input[type='checkbox'] {
@@ -834,8 +843,8 @@
 
 .toast__close {
 	flex: none;
-	width: 22px;
-	height: 22px;
+	width: 24px;
+	height: 24px;
 	display: grid;
 	place-items: center;
 	border: none;

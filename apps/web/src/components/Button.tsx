@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ReactNode, Ref } from 'react';
 import { Icon, type IconName } from './Icon.js';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'soft' | 'danger' | 'danger-ghost';
@@ -12,6 +12,8 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 	loading?: boolean;
 	block?: boolean;
 	children?: ReactNode;
+	/** React 19 truyền ref như prop thường — chuyển tiếp xuống <button>. */
+	ref?: Ref<HTMLButtonElement>;
 }
 
 export function Button({
@@ -25,6 +27,7 @@ export function Button({
 	className = '',
 	disabled,
 	type = 'button',
+	ref,
 	...rest
 }: ButtonProps) {
 	const classes = [
@@ -43,6 +46,7 @@ export function Button({
 			className={classes}
 			data-loading={loading ? 'true' : undefined}
 			disabled={disabled || loading}
+			ref={ref}
 			{...rest}
 		>
 			{icon && iconPosition === 'start' ? <Icon name={icon} /> : null}
@@ -58,12 +62,12 @@ export interface IconButtonProps extends Omit<ButtonProps, 'children' | 'icon' |
 	label: string;
 }
 
-export function IconButton({ icon, label, variant = 'ghost', size = 'md', className = '', ...rest }: IconButtonProps) {
+export function IconButton({ icon, label, variant = 'ghost', size = 'md', className = '', ref, ...rest }: IconButtonProps) {
 	const classes = ['btn', `btn--${variant}`, size !== 'md' ? `btn--${size}` : '', 'btn--icon', className]
 		.filter(Boolean)
 		.join(' ');
 	return (
-		<button type="button" className={classes} aria-label={label} title={label} {...rest}>
+		<button type="button" className={classes} aria-label={label} title={label} ref={ref} {...rest}>
 			<Icon name={icon} />
 		</button>
 	);
