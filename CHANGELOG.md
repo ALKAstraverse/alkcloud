@@ -35,13 +35,14 @@
 
 ---
 
-## [Unreleased] — Phase 8 (15/11/2026) — HOÀN THIỆN TRẢI NGHIỆM NGƯỜI DÙNG (CHƯA DEPLOY)
+## [Unreleased] — Phase 8 (15/11/2026) — HOÀN THIỆN TRẢI NGHIỆM NGƯỜI DÙNG (ĐÃ DEPLOY WEB)
 
-> Trạng thái: **CHƯA DEPLOY** — thay đổi chỉ nằm trong working tree. Đã kiểm thử thật trên stack local
-> (Vite HTTPS + `wrangler dev` + s3rver + relay), **không ghi dữ liệu test lên production**.
-> Regression: `typecheck` PASS · `399/399 test` PASS · `build` PASS · `check:web` PASS · `check:limits` PASS ·
-> `verify:all` **PASS=22 · FAIL=0 · SKIP=1 · BLOCKED=1** (SKIP/BLOCKED: B2 cần credential thật từ owner).
-> Browser test 7 viewport (360 → 1920) + lượt touch: **0 issue · 0 console error** · 163 ảnh.
+> Trạng thái: **WEB ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-web` (15/11 08:13 UTC) · `/` → 307 → `/app/CIuMbj7e/` ·
+> bundle `index-CIuMbj7e.js` 366.48 kB (gzip **112.07 kB**) · `index-Cg-zTtgA.css` 56.55 kB.
+> Đã kiểm thử thật trên stack local (Vite HTTPS + `wrangler dev` + s3rver + relay) **trước khi deploy**,
+> không ghi dữ liệu test lên production.
+> Regression (sau BUG-34): `typecheck` PASS · `401/401 test` PASS · `build` PASS · `check:web` PASS ·
+> browser test 7 viewport: **0 issue · 0 console error** · test luồng "di chuyển lên thư mục cha" PASS.
 > Bằng chứng: `docs/45-USER-EXPERIENCE-AUDIT.md` · `docs/46-UX-FIXES-AND-IMPROVEMENTS.md` · `docs/47-BROWSER-TEST-REPORT.md`.
 
 ### Added
@@ -73,7 +74,7 @@
 | :--- | :--- | :--- |
 | **Token `--text-muted`** | Light theme `#667085` → `#616b80` (≥4.79:1 trên mọi nền); dark theme không đổi | `docs/46` §3.3 |
 | **Token bấm trên touch** | Chạm 1 lần vào tên (bảng) / thân card (lưới) để mở, như Google Drive mobile; bấm đúp bị chặn trên touch | `docs/46` §4.5 |
-| **Bundle web** | P8: `index-7h2CnH3r.js` 366.11 kB (gzip **111.95 kB**), `index-Cg-zTtgA.css` 56.55 kB (gzip 10.39 kB) | `docs/14` §1 |
+| **Bundle web** | P8 (đã deploy): `index-CIuMbj7e.js` 366.48 kB (gzip **112.07 kB**), `index-Cg-zTtgA.css` 56.55 kB (gzip 10.39 kB) | `docs/14` §1 |
 
 ---
 
