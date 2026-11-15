@@ -113,7 +113,10 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 			if (parsed.data.parentId === folder.id) throw AppError.badRequest('Không thể di chuyển vào chính nó');
 			const parent = await context.db.getFolder(parsed.data.parentId);
 			if (!parent || parent.deletedAt) throw AppError.notFound('Thư mục đích không tồn tại');
-			const subtree = await context.db.listFolderSubtree(folder.id);
+			// CHỈ tính thư mục còn active: con đã xoá (trash) không làm tăng độ sâu.
+			// Trước đây tính cả cây trash ⇒ thư mục có con đã xoá bị từ chối move
+			// ("Độ sâu thư mục vượt giới hạn") dù cây active rất nông.
+			const subtree = await context.db.listFolderSubtree(folder.id, { includeDeleted: false });
 			if (subtree.some((node) => node.id === parent.id)) {
 				throw AppError.badRequest('Không thể di chuyển thư mục vào chính subtree của nó');
 			}
@@ -145,6 +148,8 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 		if (!folder || folder.deletedAt) throw AppError.notFound('Không tìm thấy thư mục');
 		const batchId = `bat_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
 		const now = context.now().toISOString();
+		// Cần cả cây trash: file nằm trong thư mục con đã xoá trước đó cũng phải
+		// được gom vào batch xoá (nếu không, chúng không bao giờ được purge).
 		const subtree = await context.db.listFolderSubtree(folder.id);
 		// SEC-05: 1 câu UPDATE (recursive CTE) cho toàn bộ subtree, KHÔNG loop từng node.
 		// Loop từng node = 1 subrequest mỗi node ⇒ vượt trần 50 subrequest của
@@ -187,6 +192,8 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 			}
 		}
 		const now = context.now().toISOString();
+		// PHẢI gồm cả cây trash: thư mục đang xoá ⇒ toàn bộ hậu duệ cũng đang xoá,
+		// và file cần restore nằm trong đó.
 		const subtree = await context.db.listFolderSubtree(folder.id);
 		// SEC-05: 1 câu UPDATE (recursive CTE) cho toàn bộ subtree.
 		await context.db.restoreFolderSubtree(folder.id, now);

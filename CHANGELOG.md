@@ -5,6 +5,30 @@
 
 ---
 
+## [Unreleased] — Phase 8.1 (15/11/2026) — SỬA LỖI DI CHUYỂN THƯ MỤC CÓ CON TRONG THÙNG RÁC (CHƯA DEPLOY)
+
+> Trạng thái: **CHƯA DEPLOY** — thay đổi chỉ nằm trong repo (chưa đẩy Worker production).
+> Kiểm thử: `typecheck` PASS · `401/401 test` PASS · `build` PASS · `check:limits` PASS (gzip 177.79 KiB).
+> Test hồi quy mới: `apps/api/test/api.test.ts` (cây 33 tầng, xoá mềm tầng sâu nhất) + `packages/db/test/repositories.test.ts`.
+>
+> Ghi chú vận hành (15/11): production đã dọn 33 thư mục rác nằm trong trash (sinh ra khi import cây thư mục
+> Google Drive với path sai) bằng `DELETE` trực tiếp trên D1 — trước khi vá, cây trash đó làm chặn
+> `move` của thư mục cha (`400 "Độ sâu thư mục vượt giới hạn"`).
+
+### Fixed
+
+| ID | Lỗi | Mức độ |
+| :--- | :--- | :--- |
+| BUG-33 | `POST /folders/:id/move` trả `400 "Độ sâu thư mục vượt giới hạn"` cho thư mục có con đã xoá (trash) — `listFolderSubtree` tính cả cây trash vào độ sâu | Cao |
+
+### Changed
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| **`listFolderSubtree`** | Thêm tuỳ chọn `includeDeleted` (mặc định `true` — giữ nguyên hành vi cũ). Route `move` dùng `includeDeleted: false` ⇒ chỉ cây active tính vào độ sâu; route `delete`/`restore` giữ mặc định vì cần nhìn thấy cây trash (gom batch xoá / khôi phục file theo batch) |
+
+---
+
 ## [Unreleased] — Phase 8 (15/11/2026) — HOÀN THIỆN TRẢI NGHIỆM NGƯỜI DÙNG (CHƯA DEPLOY)
 
 > Trạng thái: **CHƯA DEPLOY** — thay đổi chỉ nằm trong working tree. Đã kiểm thử thật trên stack local

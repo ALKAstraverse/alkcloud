@@ -102,6 +102,24 @@ describe('folders', () => {
 		const recreated = await db.createFolder({ id: 'fld_3', parentId: null, name: 'photos', depth: 0, now: '2026-01-02T00:00:00.000Z' });
 		assert.equal(recreated.id, 'fld_3');
 	});
+
+	it('listFolderSubtree mặc định gồm cả cây trash, includeDeleted=false thì chỉ lấy cây active', async () => {
+		const { db } = await createTestDb();
+		await db.createOwner(OWNER_INPUT);
+		await db.createFolder({ id: 'fld_1', parentId: null, name: 'Docs', depth: 0, now: '2026-01-01T00:00:00.000Z' });
+		await db.createFolder({ id: 'fld_2', parentId: 'fld_1', name: 'Sub', depth: 1, now: '2026-01-01T00:00:00.000Z' });
+		await db.createFolder({ id: 'fld_3', parentId: 'fld_2', name: 'Trash', depth: 2, now: '2026-01-01T00:00:00.000Z' });
+		await db.softDeleteFolder('fld_3', 'batch_1', '2026-01-02T00:00:00.000Z');
+
+		const all = await db.listFolderSubtree('fld_1');
+		assert.equal(all.length, 3);
+		assert.ok(all.some((node) => node.id === 'fld_3' && node.deletedAt));
+
+		const active = await db.listFolderSubtree('fld_1', { includeDeleted: false });
+		assert.equal(active.length, 2);
+		assert.ok(active.every((node) => node.deletedAt === null));
+		assert.ok(active.some((node) => node.id === 'fld_2'));
+	});
 });
 
 describe('files', () => {

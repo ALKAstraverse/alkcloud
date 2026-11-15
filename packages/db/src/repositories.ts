@@ -545,17 +545,33 @@ export class Database {
 		return result.changes ?? 0;
 	}
 
-	/** Folder + toàn bộ hậu duệ (dùng cho move/delete/restore theo subtree). */
-	async listFolderSubtree(id: Id): Promise<Folder[]> {
-		const result = await this.driver.query(
-			`WITH RECURSIVE subtree(id) AS (
+	/**
+	 * Folder + toàn bộ hậu duệ (dùng cho move/delete/restore theo subtree).
+	 *
+	 * `includeDeleted: false` ⇒ CHỈ trả về thư mục còn active (`deleted_at IS NULL`).
+	 * Bắt buộc cho check độ sâu khi move: thư mục con đã xoá (trash) KHÔNG được
+	 * tính vào độ sâu — nếu tính, một thư mục có cây con trong trash sẽ bị từ chối
+	 * move ("Độ sâu thư mục vượt giới hạn") dù cây active rất nông.
+	 *
+	 * Mặc định `includeDeleted: true` — restore/delete cần nhìn thấy cả cây trong
+	 * trash (khôi phục file theo batch, xoá mềm subtree).
+	 */
+	async listFolderSubtree(id: Id, options: { includeDeleted?: boolean } = {}): Promise<Folder[]> {
+		const includeDeleted = options.includeDeleted ?? true;
+		const sql = includeDeleted
+			? `WITH RECURSIVE subtree(id) AS (
 				SELECT id FROM folders WHERE id = ?
 				UNION ALL
 				SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
 			)
-			SELECT f.* FROM folders f JOIN subtree s ON f.id = s.id ORDER BY f.depth ASC`,
-			[id],
-		);
+			SELECT f.* FROM folders f JOIN subtree s ON f.id = s.id ORDER BY f.depth ASC`
+			: `WITH RECURSIVE subtree(id) AS (
+				SELECT id FROM folders WHERE id = ? AND deleted_at IS NULL
+				UNION ALL
+				SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id WHERE f.deleted_at IS NULL
+			)
+			SELECT f.* FROM folders f JOIN subtree s ON f.id = s.id ORDER BY f.depth ASC`;
+		const result = await this.driver.query(sql, [id]);
 		return result.rows.map(mapFolder);
 	}
 

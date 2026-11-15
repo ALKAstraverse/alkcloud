@@ -475,6 +475,45 @@ describe('regression fixes (Phase 2)', () => {
 		assert.equal(second.status, 409);
 	});
 
+	it('move folder có con trong trash vẫn được (trash không tính vào độ sâu)', async () => {
+		const harness = await createHarness();
+		// Cây 33 tầng: tầng sâu nhất bị xoá mềm ⇒ cây trash sâu 32.
+		// Trước đây move tính cả cây trash ⇒ 400 "Độ sâu thư mục vượt giới hạn".
+		let parentId: string | null = null;
+		let deepestId = '';
+		let secondDeepestId = '';
+		let rootId = '';
+		for (let depth = 0; depth <= 32; depth += 1) {
+			const response = await harness.request('/folders', {
+				method: 'POST',
+				body: { name: `Tầng ${depth}`, parentId },
+			});
+			assert.equal(response.status, 201);
+			const body = (await response.json()) as { folder: { id: string; depth: number } };
+			assert.equal(body.folder.depth, depth);
+			if (depth === 0) rootId = body.folder.id;
+			if (depth === 31) secondDeepestId = body.folder.id;
+			deepestId = body.folder.id;
+			parentId = body.folder.id;
+		}
+		const deleted = await harness.request(`/folders/${deepestId}`, { method: 'DELETE' });
+		assert.equal(deleted.status, 200);
+
+		const target = await harness.request('/folders', { method: 'POST', body: { name: 'Đích' } });
+		const targetId = ((await target.json()) as { folder: { id: string } }).folder.id;
+
+		const moved = await harness.request(`/folders/${rootId}/move`, {
+			method: 'POST',
+			body: { parentId: targetId },
+		});
+		assert.equal(moved.status, 200);
+		const rootAfter = await harness.db.getFolder(rootId);
+		assert.equal(rootAfter?.parentId, targetId);
+		assert.equal(rootAfter?.depth, 1);
+		// Hậu duệ còn active được cập nhật depth theo delta (+1).
+		assert.equal((await harness.db.getFolder(secondDeepestId))?.depth, 32);
+	});
+
 	it('share có mật khẩu không lộ metadata trước khi unlock', async () => {
 		const harness = await createHarness();
 		await harness.db.createFile({
