@@ -494,14 +494,17 @@ async function main(): Promise<void> {
 		});
 		assert(unlock.grant, 'unlock phải trả grant');
 		assert(unlock.share.unlocked, 'phải unlocked');
-		const download = await api('/public/share/download', {
-			raw: true,
+		// Đúng đường SharePage dùng: API ký URL (JSON), browser tải trực tiếp B2.
+		const target = await apiJson<{ url: string; fileName: string }>('/public/share/download-url', {
 			headers: { 'x-share-token': shareToken, 'x-share-grant': unlock.grant },
 		});
-		assert(download.status === 200, `share download trả ${download.status}`);
-		const text = await download.text();
+		assert(target.url.includes('X-Amz-Signature'), 'download-url phải là presigned URL');
+		assert(target.fileName.length > 0, 'download-url phải trả fileName');
+		const direct = await fetch(target.url);
+		assert(direct.status === 200, `tải trực tiếp B2 trả ${direct.status}`);
+		const text = await direct.text();
 		assert(text.length === 5, `phải nhận 5 byte, nhận ${text.length}`);
-		return 'grant header OK';
+		return 'grant header + download-url (B2 direct) OK';
 	});
 
 	await storageStep('sharing: download không grant bị 403', async () => {

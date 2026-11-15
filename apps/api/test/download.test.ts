@@ -27,6 +27,18 @@ async function seed(harness: Awaited<ReturnType<typeof createHarness>>): Promise
 }
 
 describe('download & range', () => {
+	it('trả 302 tới presigned GET của B2 — KHÔNG stream byte qua Worker', async () => {
+		const harness = await createHarness();
+		const fileId = await seed(harness);
+		const response = await harness.request(`/files/${fileId}/download`, { followPresign: false });
+		assert.equal(response.status, 302);
+		assert.equal(await response.text(), '', 'response redirect không được chứa byte file');
+		const location = response.headers.get('location') ?? '';
+		assert.match(location, /^https:\/\/mock\.invalid\/get\//);
+		assert.match(location, /response-content-disposition=attachment/);
+		assert.equal(response.headers.get('cache-control'), 'private, no-store');
+	});
+
 	it('tải toàn bộ: content-type, content-disposition UTF-8, accept-ranges', async () => {
 		const harness = await createHarness();
 		const fileId = await seed(harness);

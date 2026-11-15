@@ -5,6 +5,46 @@
 
 ---
 
+## [Unreleased] — 15/11/2026 — Kiến trúc file: KHÔNG stream byte qua Worker + index đọc D1
+
+> Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `934bd864-9e51-48e8-b6b3-1c381fc35d98`
+> · Worker `alkcloud-web` version `8cdbc8a1-9e4a-4476-aa0b-49d2ab98ff2b` · web entry `/app/CVbB1pS3/`.
+> Migration D1 **0007_read_indexes** đã áp dụng remote (backup trước deploy:
+> `backups/alkcloud-d1-20261115T162427.sql`, 1.23 MB).
+> Kiểm thử: `typecheck` PASS · `npm test` **PASS=420 · FAIL=0** · `build` PASS ·
+> `check:limits` PASS (gzip 178.84 KiB) · `check-production-health.sh` PASS ·
+> E2E production **PASS=22 · FAIL=0 · SKIP=0 · BLOCKED=0** (gồm Range 206 + filename UTF-8
+> trên object B2 thật).
+
+### Changed — file không đi qua Worker free plan
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| **Upload (single + multipart)** | Browser PUT **thẳng** presigned URL của B2; multipart presign theo lô 20 part (`POST /uploads/:id/parts`). Worker chỉ tạo session, ký URL, ghi D1 — **không nhận byte file**, không tốn CPU/body-limit 100 MB |
+| **Bỏ proxy upload** | Xoá route `POST/PUT /uploads/:id/content` và fallback proxy trong web client ⇒ không còn đường nào đẩy byte qua Worker. PUT lỗi ⇒ báo lỗi + abort session (không âm thầm chuyển qua Worker) |
+| **Download (owner)** | `GET /files/:id/download` trả **302** tới presigned GET của B2 (TTL 5 phút) thay vì stream body. `FilesPage` luôn mở presigned URL từ `/files/:id/open` |
+| **Download (public share)** | `GET /public/share/download` trả **302**; thêm `GET /public/share/download-url` trả JSON `{url,fileName,size}` để SharePage fetch **trực tiếp B2** (token share vẫn nằm trong header, không vào query string). Vẫn kiểm tra grant/mật khẩu, Range hợp lệ và maxDownloads trước khi ký URL |
+| **Presign GET** | Hỗ trợ `response-content-type` + `response-content-disposition` (giữ đúng tên file gốc khi navigation tải từ B2) |
+| **B2 CORS** | Xác minh live 15/11: preflight `PUT` (content-type) và `GET` cho origin `https://cloud.alk.xx.kg` đều 200; expose `ETag` (multipart complete cần). Không đổi cấu hình bucket |
+
+### Added — D1 index cho đường đọc metadata (giảm row bị tính tiền)
+
+Migration `apps/api/migrations/0007_read_indexes.sql` (single-owner nên **không có `user_id`**;
+khoá cây là `folder_id`/`parent_id` — `path` không lưu chuỗi):
+
+- `idx_files_active_folder_name(folder_id, name_lower, id) WHERE deleted_at IS NULL` — list file trong thư mục + keyset, không temp sort.
+- `idx_folders_active_parent_name(parent_id, name_lower) WHERE deleted_at IS NULL` — list folder con.
+- `idx_shares_file_created(file_id, created_at DESC)` — danh sách share của 1 file.
+- `idx_upload_sessions_open_created(status, created_at)` — dọn session OPEN cũ.
+- Test `packages/db/test/read-indexes.test.ts` chốt `EXPLAIN QUERY PLAN` dùng đúng index (không `SCAN files`).
+
+### Ghi chú vận hành (Worker Free 100k request/ngày)
+
+- Mỗi file upload = 1 create + 1 complete (+ 1 presign mỗi 20 part); mỗi lượt tải = 1 request ký URL. Byte đi trực tiếp B2 ⇒ **không** tiêu request/CPU của Worker.
+- Thumbnail/preview hoặc sync nhiều file nhỏ sẽ làm tăng request nhanh (mỗi file vẫn cần metadata + ký URL) — nếu thêm thumbnail phải sinh ở client hoặc cache sẵn, **không** proxy qua Worker.
+
+---
+
 ## [Unreleased] — 15/11/2026 — Thùng rác: xoá vĩnh viễn NGAY (file + folder)
 
 > Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `acce3937-190d-404a-9bbb-c55eccf0d8ad`

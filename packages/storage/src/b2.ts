@@ -139,10 +139,15 @@ export class B2Storage implements ObjectStorage {
 		key: string;
 		expiresInSeconds?: number;
 		responseContentType?: string;
+		responseContentDisposition?: string;
 	}): Promise<PresignedTarget> {
-		// `response-content-type` là QUERY parameter của S3 GetObject (không phải header).
+		// `response-*` là QUERY parameter của S3 GetObject (không phải header).
+		// `response-content-disposition` giúp navigation giữ đúng tên file gốc.
 		const query: Record<string, string> = {};
 		if (request.responseContentType) query['response-content-type'] = request.responseContentType;
+		if (request.responseContentDisposition) {
+			query['response-content-disposition'] = request.responseContentDisposition;
+		}
 		return this.presign('GET', request.key, query, {}, request.expiresInSeconds);
 	}
 

@@ -378,14 +378,6 @@ export async function openFileUrl(id: string): Promise<{ url: string; expiresAt:
 	return apiRequest(`/files/${encodeURIComponent(id)}/open`);
 }
 
-/**
- * URL tải file qua Worker proxy — giữ đúng tên file gốc (`content-disposition`).
- * Dùng cho file vừa/nhỏ; file lớn nên dùng presigned URL để tránh timeout proxy.
- */
-export function fileDownloadUrl(id: string): string {
-	return `${API_BASE}/files/${encodeURIComponent(id)}/download`;
-}
-
 // ------------------------------------------------------------------ uploads
 
 export async function createUploadSession(input: {
@@ -406,43 +398,6 @@ export async function presignUploadParts(
 	return apiRequest(`/uploads/${encodeURIComponent(uploadSessionId)}/parts`, {
 		method: 'POST',
 		body: { uploadId, partNumbers },
-	});
-}
-
-/**
- * PUT nội dung part qua API.
- *
- * Browser KHÔNG PUT thẳng vào presigned URL của B2: CSP do Cloudflare edge đặt
- * có thể không khai báo host B2 trong `connect-src` ⇒ fetch bị chặn ⇒
- * "Failed to fetch". API nhận body rồi chuyển tiếp qua relay tới B2 (2-hop).
- *
- * Client KHÔNG gửi presigned URL (bearer credential) — API tự ký target từ
- * session. Multipart chỉ cần `partNumber` + `uploadId` (không đủ để PUT vào B2
- * khi thiếu secret key).
- */
-export async function uploadContent(
-	uploadSessionId: string,
-	params: { partNumber?: number; uploadId?: string },
-	body: Blob,
-	headers: Record<string, string> = {},
-	signal?: AbortSignal,
-): Promise<Response> {
-	const query = new URLSearchParams();
-	if (params.partNumber !== undefined) query.set('partNumber', String(params.partNumber));
-	if (params.uploadId) query.set('uploadId', params.uploadId);
-	const suffix = query.size > 0 ? `?${query.toString()}` : '';
-	// Dùng **POST** (không phải PUT): `Access-Control-Allow-Methods` ở Cloudflare edge
-	// không có PUT ⇒ Chrome chặn request thật ngay sau preflight (preflight 204 OK nhưng
-	// browser không gửi ⇒ "Failed to fetch"). POST nằm trong allow-list.
-	return fetch(`${API_BASE}/uploads/${encodeURIComponent(uploadSessionId)}/content${suffix}`, {
-		method: 'POST',
-		headers: {
-			...headers,
-			...(csrfToken ? { 'x-alkcloud-csrf': csrfToken } : {}),
-		},
-		body,
-		credentials: 'include',
-		signal,
 	});
 }
 

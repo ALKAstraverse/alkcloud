@@ -74,12 +74,23 @@ export class MockObjectStorage implements ObjectStorage {
 		};
 	}
 
-	async presignGet(request: { key: string; expiresInSeconds?: number }): Promise<PresignedTarget> {
+	async presignGet(request: {
+		key: string;
+		expiresInSeconds?: number;
+		responseContentType?: string;
+		responseContentDisposition?: string;
+	}): Promise<PresignedTarget> {
 		this.calls.push('presignGet');
 		this.failIfForced();
 		const expiresIn = request.expiresInSeconds ?? 300;
+		const query = new URLSearchParams();
+		if (request.responseContentType) query.set('response-content-type', request.responseContentType);
+		if (request.responseContentDisposition) {
+			query.set('response-content-disposition', request.responseContentDisposition);
+		}
+		const suffix = query.size > 0 ? `?${query.toString()}` : '';
 		return {
-			url: `https://mock.invalid/get/${encodeURIComponent(request.key)}`,
+			url: `https://mock.invalid/get/${encodeURIComponent(request.key)}${suffix}`,
 			method: 'GET',
 			headers: {},
 			expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),

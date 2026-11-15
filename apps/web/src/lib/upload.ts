@@ -4,7 +4,6 @@ import {
 	completeUpload,
 	createUploadSession,
 	presignUploadParts,
-	uploadContent,
 } from './api.js';
 
 export interface UploadProgress {
@@ -40,33 +39,23 @@ const MAX_PARTS_PER_REQUEST = 20;
 const CONCURRENCY = 3;
 
 /**
- * PUT một part.
+ * PUT một part THẲNG vào presigned URL của B2 (1 hop: browser → B2).
  *
- * Hai đường, thử theo thứ tự:
- *   1. **PUT thẳng vào presigned URL của B2** (1 hop: browser → B2).
- *      Nhanh nhất, không tốn CPU/quota của Worker, không cần API làm trung gian.
- *      Điều kiện: CSP `connect-src` phải cho phép host B2 (đang có:
- *      `https://s3.ca-east-006.backblazeb2.com`) và bucket CORS phải cho
- *      origin `https://cloud.alk.xx.kg` với method PUT + expose ETag (đã cấu hình).
- *      Presigned URL vốn đã được trả cho browser trong response của
- *      `POST /uploads` và `POST /uploads/:id/parts` ⇒ không phát sinh rủi ro mới.
- *   2. Nếu đường 1 bị chặn (CSP/lỗi mạng) hoặc B2 trả lỗi ⇒ fallback qua API
- *      (`POST /uploads/:id/content` → API → relay → B2). Đường này chỉ cần
- *      `api.alk.xx.kg` nên vẫn chạy được khi edge CSP chặn host B2.
+ * Không có đường proxy qua Worker: body file không bao giờ đi qua API
+ * (Worker free chỉ có ~100MB/request và bị tính CPU). API chỉ ký URL + ghi D1.
  *
- * Đo thật 14/11/2026 (50 MB, browser): proxy 14,5 s cho phần dữ liệu vs direct
- * 6,8 s ⇒ direct nhanh ~2,1× và giảm 2 Worker hop.
+ * Điều kiện hạ tầng (đã cấu hình, có test):
+ *   - CSP `connect-src` cho host B2 (`https://s3.ca-east-006.backblazeb2.com`);
+ *   - bucket CORS cho origin `https://cloud.alk.xx.kg`, method PUT, expose `ETag`.
+ * Presigned URL được trả trong response `POST /uploads` / `POST /uploads/:id/parts`.
  */
 async function putPart(
-	uploadSessionId: string,
 	target: string,
 	headers: Record<string, string> | undefined,
 	blob: Blob,
 	signal?: AbortSignal,
-	part?: { partNumber: number; uploadId?: string },
 ): Promise<string> {
-	let response: Response | null = null;
-	let directError: unknown = null;
+	let response: Response;
 	try {
 		response = await fetch(target, {
 			method: 'PUT',
@@ -74,37 +63,17 @@ async function putPart(
 			body: blob,
 			signal,
 		});
-	} catch (error) {
-		directError = error;
-	}
-	// Chỉ fallback khi đường trực tiếp không dùng được (bị CSP chặn, lỗi mạng)
-	// hoặc B2 trả lỗi. 4xx từ B2 (403 URL hết hạn) cũng thử proxy: API tự ký
-	// lại URL mới nên có thể cứu được phiên upload.
-	// Ngoài ra: nếu B2 trả 200 nhưng browser KHÔNG đọc được ETag (bucket CORS
-	// bỏ `ExposeHeader: ETag`) ⇒ phải gọi proxy vì API trả kèm
-	// `access-control-expose-headers: ETag` ⇒ complete mới có etag hợp lệ.
-	const directEtag = response?.ok ? (response.headers.get('etag') ?? '') : '';
-	if (!response || !response.ok || directEtag === '') {
-		try {
-			const proxied = await uploadContent(
-				uploadSessionId,
-				part ? { partNumber: part.partNumber, uploadId: part.uploadId } : {},
-				blob,
-				headers ?? {},
-				signal,
-			);
-			if (proxied.ok || !response) response = proxied;
-		} catch (error) {
-			if (!response) throw directError ?? error;
-		}
-	}
-	if (!response) {
+	} catch {
 		throw new ApiError(0, 'upload_part_failed', 'Không gửi được dữ liệu lên B2');
 	}
 	if (!response.ok) {
 		throw new ApiError(response.status, 'upload_part_failed', `PUT part thất bại (${response.status})`);
 	}
-	const etag = response.headers.get('etag') ?? '';
+	// Bucket CORS phải expose ETag; thiếu header ⇒ không thể complete multipart.
+	const etag = response.headers.get('etag');
+	if (!etag) {
+		throw new ApiError(0, 'upload_part_failed', 'B2 không trả ETag (kiểm tra CORS expose ETag)');
+	}
 	return etag.replace(/^"|"$/g, '');
 }
 
@@ -153,7 +122,7 @@ export async function uploadFile(
 		const part = session.parts[0];
 		if (!part) throw new Error('thiếu URL upload');
 		try {
-			const etag = await putPart(session.uploadSessionId, part.url, part.headers, file, options.signal);
+			const etag = await putPart(part.url, part.headers, file, options.signal);
 			const completed = await completeUpload(session.uploadSessionId, {
 				parts: [{ partNumber: 1, etag, size: file.size }],
 			});
@@ -201,14 +170,7 @@ export async function uploadFile(
 					const start = (target.partNumber - 1) * session.partSize;
 					const end = Math.min(start + session.partSize, file.size);
 					const blob = file.slice(start, end);
-					const etag = await putPart(
-						session.uploadSessionId,
-						target.url,
-						target.headers,
-						blob,
-						options.signal,
-						{ partNumber: target.partNumber, uploadId },
-					);
+					const etag = await putPart(target.url, target.headers, blob, options.signal);
 					parts.push({ partNumber: target.partNumber, etag, size: blob.size });
 					uploadedBytes += blob.size;
 					reportProgress();

@@ -222,15 +222,15 @@ describe('P3-M0 — lượt tải share không bị mất khi đọc object th�
 		const created = (await create.json()) as { token: string; share: { id: string } };
 		const token = created.token;
 		const storage = harness.storage;
-		const original = storage.getObject.bind(storage);
-		storage.getObject = async () => {
+		const original = storage.presignGet.bind(storage);
+		storage.presignGet = async () => {
 			throw new Error('B2 unavailable');
 		};
 		const failed = await harness.request('/public/share/download', {
 			headers: { 'x-share-token': token },
 		});
 		assert.equal(failed.status, 500);
-		storage.getObject = original;
+		storage.presignGet = original;
 		const row = await harness.db.getShareById(created.share.id);
 		assert.equal(row?.downloadCount, 0, 'lượt tải phải được hoàn lại khi tải thất bại');
 	});

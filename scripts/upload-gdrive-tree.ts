@@ -138,29 +138,16 @@ interface UploadSession {
 	parts: { partNumber: number; url: string; headers?: Record<string, string> }[];
 }
 
+/** PUT thẳng presigned URL của B2 — file không đi qua Worker. */
 async function putPart(
-	sessionId: string,
 	target: string,
 	headers: Record<string, string> | undefined,
 	chunk: Buffer,
-	part: { partNumber: number; uploadId?: string },
 ): Promise<string> {
-	let response = await fetch(target, { method: 'PUT', headers: headers ?? {}, body: chunk });
-	let etag = response.ok ? (response.headers.get('etag') ?? '') : '';
-	if (!response.ok || etag === '') {
-		// fallback qua API (API → relay → B2)
-		const query = new URLSearchParams();
-		query.set('partNumber', String(part.partNumber));
-		if (part.uploadId) query.set('uploadId', part.uploadId);
-		const proxyHeaders: Record<string, string> = { origin: ORIGIN, cookie, 'x-alkcloud-csrf': csrf };
-		response = await fetch(`${API}/uploads/${encodeURIComponent(sessionId)}/content?${query}`, {
-			method: 'PUT',
-			headers: proxyHeaders,
-			body: chunk,
-		});
-		if (!response.ok) throw new Error(`PUT part thất bại (${response.status})`);
-		etag = response.headers.get('etag') ?? '';
-	}
+	const response = await fetch(target, { method: 'PUT', headers: headers ?? {}, body: chunk });
+	if (!response.ok) throw new Error(`PUT part thất bại (${response.status})`);
+	const etag = response.headers.get('etag') ?? '';
+	if (!etag) throw new Error('B2 không trả ETag — kiểm tra CORS expose ETag');
 	return etag.replace(/^"|"$/g, '');
 }
 
@@ -176,7 +163,7 @@ async function uploadFile(filePath: string, fileName: string, size: number, fold
 			const part = session.parts[0]!;
 			const buffer = Buffer.allocUnsafe(size);
 			readSync(fd, buffer, 0, size, 0);
-			const etag = await putPart(session.uploadSessionId, part.url, part.headers, buffer, { partNumber: 1 });
+			const etag = await putPart(part.url, part.headers, buffer);
 			await api(`/uploads/${encodeURIComponent(session.uploadSessionId)}/complete`, {
 				method: 'POST',
 				body: { parts: [{ partNumber: 1, etag, size }] },
@@ -197,10 +184,7 @@ async function uploadFile(filePath: string, fileName: string, size: number, fold
 				const length = Math.min(session.partSize, size - start);
 				const chunk = Buffer.allocUnsafe(length);
 				readSync(fd, chunk, 0, length, start);
-				const etag = await putPart(session.uploadSessionId, target.url, target.headers, chunk, {
-					partNumber: target.partNumber,
-					uploadId,
-				});
+				const etag = await putPart(target.url, target.headers, chunk);
 				parts.push({ partNumber: target.partNumber, etag, size: length });
 			}
 		}

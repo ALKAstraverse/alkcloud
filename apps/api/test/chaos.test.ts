@@ -251,7 +251,8 @@ describe('chaos — WS-L: không mất dữ liệu khi hạ tầng hỏng', () =
 		});
 		assert.equal(shareResponse.status, 201);
 		const shareBody = (await shareResponse.json()) as { token: string };
-		harness.storage.setRules([{ operation: 'getObject', mode: 'server_error', times: 1 }]);
+		// Download chỉ ký URL — lỗi hạ tầng ở bước ký phải hoàn lượt tải.
+		harness.storage.setRules([{ operation: 'presignGet', mode: 'server_error', times: 1 }]);
 		const response = await harness.request('/public/share/download', {
 			headers: { 'x-share-token': shareBody.token },
 		});
@@ -272,7 +273,7 @@ describe('chaos — WS-L: không mất dữ liệu khi hạ tầng hỏng', () =
 		});
 		assert.equal(completed.status, 201);
 
-		harness.storage.setRules([{ operation: 'getObject', mode: 'disconnect', times: 1 }]);
+		harness.storage.setRules([{ operation: 'presignGet', mode: 'disconnect', times: 1 }]);
 		const response = await harness.request(`/files/${created.fileId}/download`);
 		const text = await response.text();
 		assert.ok(response.status >= 400);

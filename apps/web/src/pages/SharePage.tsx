@@ -113,13 +113,18 @@ export function SharePage({ token }: SharePageProps) {
 		setError(null);
 		setDownloading(true);
 		try {
-			const response = await fetch(`${API_BASE}/public/share/download`, {
-				headers: { 'x-share-token': token, ...(grant ? { 'x-share-grant': grant } : {}) },
-			});
+			// API chỉ ký URL (JSON nhỏ, token vẫn nằm trong header); byte file
+			// được fetch trực tiếp từ B2 — không đi qua Worker.
+			const target = await shareRequest<{ url: string; fileName: string }>(
+				'/public/share/download-url',
+				token,
+				{ headers: grant ? { 'x-share-grant': grant } : {} },
+			);
+			const response = await fetch(target.url);
 			if (!response.ok) {
 				throw new ApiError(response.status, 'download_failed', `Tải thất bại (${response.status})`);
 			}
-			await downloadToFile(response, info?.fileName ?? 'download');
+			await downloadToFile(response, info?.fileName ?? target.fileName ?? 'download');
 			// Tải xong: cập nhật lượt tải còn lại (nếu có giới hạn).
 			const refreshed = await shareRequest<{ share: ShareInfo }>('/public/share/info', token, {
 				headers: grant ? { 'x-share-grant': grant } : {},

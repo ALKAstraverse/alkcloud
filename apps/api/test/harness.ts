@@ -26,7 +26,14 @@ export interface Harness {
 	csrf: string;
 	request: (
 		path: string,
-		options?: { method?: string; body?: unknown; headers?: Record<string, string>; cookie?: string },
+		options?: {
+			method?: string;
+			body?: unknown;
+			headers?: Record<string, string>;
+			cookie?: string;
+			/** false = giữ nguyên 302 (mặc định mô phỏng client tự follow tới B2). */
+			followPresign?: boolean;
+		},
 	) => Promise<Response>;
 }
 
@@ -59,7 +66,13 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 
 	const request = async (
 		path: string,
-		options: { method?: string; body?: unknown; headers?: Record<string, string>; cookie?: string } = {},
+		options: {
+			method?: string;
+			body?: unknown;
+			headers?: Record<string, string>;
+			cookie?: string;
+			followPresign?: boolean;
+		} = {},
 	) => {
 		const method = options.method ?? 'GET';
 		const headers: Record<string, string> = {
@@ -70,13 +83,34 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			...(options.headers ?? {}),
 		};
 		if (options.cookie === undefined && cookie) headers.cookie = cookie;
-		return app.fetch(
+		const response = await app.fetch(
 			new Request(`${API}${path}`, {
 				method,
 				headers,
 				body: options.body === undefined ? undefined : JSON.stringify(options.body),
 			}),
 		);
+		// Mô phỏng client/browser follow 302 → B2: route download KHÔNG stream byte
+		// qua Worker mà redirect tới presigned GET. Harness tải từ MockObjectStorage.
+		const location = response.headers.get('location') ?? '';
+		if (
+			options.followPresign !== false &&
+			method === 'GET' &&
+			(response.status === 302 || response.status === 303 || response.status === 307) &&
+			location.startsWith('https://mock.invalid/get/')
+		) {
+			const url = new URL(location);
+			const key = decodeURIComponent(url.pathname.slice('/get/'.length));
+			const upstream = await storage.getObject(key, new Headers(headers).get('range') ?? undefined);
+			const finalHeaders = new Headers(upstream.headers);
+			const contentType = url.searchParams.get('response-content-type');
+			if (contentType) finalHeaders.set('content-type', contentType);
+			const disposition = url.searchParams.get('response-content-disposition');
+			if (disposition) finalHeaders.set('content-disposition', disposition);
+			finalHeaders.set('cache-control', 'private, no-store');
+			return new Response(upstream.body, { status: upstream.status, headers: finalHeaders });
+		}
+		return response;
 	};
 
 	if (options.bootstrap !== false) {

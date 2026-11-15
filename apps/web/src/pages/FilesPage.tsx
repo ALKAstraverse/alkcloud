@@ -5,7 +5,6 @@ import {
 	createShare,
 	deleteFile,
 	deleteFolder,
-	fileDownloadUrl,
 	getQuota,
 	getUsage,
 	listFilesAll,
@@ -83,7 +82,6 @@ type DialogState =
 type SortKey = 'name' | 'modified' | 'size';
 type SortDir = 'asc' | 'desc';
 
-const PROXY_DOWNLOAD_LIMIT = 100 * 1024 * 1024;
 const LAYOUT_KEY = 'alkcloud.layout';
 const SORT_KEY = 'alkcloud.sort';
 const SORT_DIR_KEY = 'alkcloud.sortDir';
@@ -372,11 +370,8 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 
 	const openFile = async (file: FileEntry) => {
 		try {
+			// Navigation tới presigned GET của B2 — file KHÔNG đi qua Worker.
 			const result = await openFileUrl(file.id);
-			if (result.size <= PROXY_DOWNLOAD_LIMIT) {
-				window.location.assign(fileDownloadUrl(file.id));
-				return;
-			}
 			window.location.assign(result.url);
 		} catch (caught) {
 			toast.push({ tone: 'error', title: 'Không mở được tệp', message: errorMessage(caught, file.name) });

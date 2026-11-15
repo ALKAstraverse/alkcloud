@@ -60,7 +60,12 @@ export interface ListObjectsResult {
 export interface ObjectStorage {
 	presignPut(request: PresignPutRequest): Promise<PresignedTarget>;
 	presignUploadPart(request: PresignPartRequest): Promise<PresignedTarget>;
-	presignGet(request: { key: string; expiresInSeconds?: number; responseContentType?: string }): Promise<PresignedTarget>;
+	presignGet(request: {
+		key: string;
+		expiresInSeconds?: number;
+		responseContentType?: string;
+		responseContentDisposition?: string;
+	}): Promise<PresignedTarget>;
 	createMultipartUpload(request: { key: string; contentType: string }): Promise<{ uploadId: string }>;
 	completeMultipartUpload(request: {
 		key: string;

@@ -7,7 +7,7 @@
 - **Relay B2**: Worker (`apps/b2relay`) — proxy S3 có allowlist host, giữ credential B2 ở Worker secret.
 - **Packages**: `core` (validation/domain), `db` (D1 repositories/migrations), `storage` (S3/B2), `auth` (PBKDF2 session).
 
-Tính năng: quản lý thư mục/file, upload single-part + multipart (presign), tải xuống full/Range, thùng rác 30 ngày + purge, chia sẻ có mật khẩu (hết hạn/giới hạn lượt tải/thu hồi), quota + degradation mode, audit log, backup/restore D1, E2E production.
+Tính năng: quản lý thư mục/file, upload single-part + multipart (**browser PUT thẳng presigned URL của B2**, từng part), tải xuống bằng **presigned GET/redirect** (byte không đi qua Worker free plan), thùng rác 30 ngày + purge, chia sẻ có mật khẩu (hết hạn/giới hạn lượt tải/thu hồi), quota + degradation mode, audit log, backup/restore D1, E2E production.
 
 ## Bắt đầu
 

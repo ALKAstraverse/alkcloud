@@ -1,4 +1,4 @@
-import { AppError, hmacHex, sha256Hex, timingSafeEqual } from '@alkcloud/core';
+import { AppError, hmacHex, sha256Hex, timingSafeEqual, type DegradationMode } from '@alkcloud/core';
 import { Hono } from 'hono';
 import { MemoryRateLimiter, DEFAULT_POLICIES, serializeCookie, parseCookies } from '@alkcloud/auth';
 import type { AppContext } from '../context.js';
@@ -6,7 +6,6 @@ import { recordAudit } from '../lib/audit.js';
 import { clientIp, encodeRfc5987, json, parseJsonBody } from '../lib/http.js';
 import { assertCapability, degradationHeaders } from '../lib/quota-guard.js';
 import { assertRangeSatisfiable } from '../lib/range.js';
-import { isServerSideStorageFailure } from '../lib/storage-error.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { shareUnlockSchema } from '@alkcloud/core';
 
@@ -170,14 +169,20 @@ export function createPublicShareRoutes(context: AppContext): Hono<AppEnv> {
 		);
 	});
 
-	app.get('/share/download', async (c) => {
-		const mode = c.get('quotaMode') ?? 'NORMAL';
+	/**
+	 * Kiểm tra quyền tải share + tăng bộ đếm (dùng chung cho redirect và JSON presign).
+	 *
+	 * SEC-02: kiểm tra Range TRƯỚC khi tăng bộ đếm. Nếu không, client gửi Range
+	 * không thỏa mãn (vd bytes=999999999-) ⇒ B2 trả 416 ⇒ nếu route hoàn lại lượt
+	 * tải thì attacker reset được bộ đếm và tải vô hạn lần dù có maxDownloads.
+	 */
+	const authorizeDownload = async (request: Request, mode: DegradationMode) => {
 		assertCapability(mode, 'allowPublicShareDownload');
-		const { share, token } = await resolveShare(c.req.raw);
+		const { share } = await resolveShare(request);
 
 		if (share.passwordHash) {
-			const headerGrant = c.req.header(SHARE_GRANT_HEADER);
-			const cookies = parseCookies(c.req.header('cookie'));
+			const headerGrant = request.headers.get(SHARE_GRANT_HEADER);
+			const cookies = parseCookies(request.headers.get('cookie'));
 			const cookieGrant = cookies[shareCookieName(share.id)];
 			const provided = headerGrant ?? cookieGrant;
 			const valid = provided ? await verifyShareGrant(provided, share.id) : false;
@@ -189,45 +194,50 @@ export function createPublicShareRoutes(context: AppContext): Hono<AppEnv> {
 		const file = await context.db.getFile(share.fileId);
 		if (!file || file.deletedAt) throw AppError.notFound('File không còn tồn tại');
 
-		// SEC-02: kiểm tra Range TRƯỚC khi tăng bộ đếm.
-		// Nếu không, client gửi Range không thỏa mãn (vd bytes=999999999-) ⇒ B2 trả
-		// 416 ⇒ route hoàn lại lượt tải ⇒ attacker reset được bộ đếm và tải
-		// vô hạn lần dù share có maxDownloads.
-		const range = assertRangeSatisfiable(c.req.header('range'), file.size);
+		assertRangeSatisfiable(request.headers.get('range'), file.size);
 
 		// Tăng bộ đếm download ngay khi cấp quyền tải (atomic, có điều kiện max_downloads).
 		const allowed = await context.db.incrementShareDownload(share.id, context.now().toISOString());
 		if (!allowed) throw AppError.forbidden('Share đã đạt giới hạn tải');
 
-		let upstream: Response;
+		const presign = () =>
+			context.storage.presignGet({
+				key: file.objectKey,
+				expiresInSeconds: 300,
+				responseContentType: file.contentType || 'application/octet-stream',
+				responseContentDisposition: `attachment; filename*=UTF-8''${encodeRfc5987(file.name)}`,
+			});
+
+		// Ký URL thất bại ⇒ hoàn lượt tải (chưa có dữ liệu nào rời khỏi B2).
+		let target;
 		try {
-			upstream = await context.storage.getObject(file.objectKey, range ?? undefined);
+			target = await presign();
 		} catch (error) {
-			// Chỉ hoàn lại lượt tải khi lỗi do HẠ TẦNG (5xx / mạng). Lỗi 4xx là do
-			// client ⇒ KHÔNG hoàn (nếu không, lỗi 416 sẽ reset được bộ đếm).
-			if (isServerSideStorageFailure(error)) {
-				await context.db.decrementShareDownload(share.id, context.now().toISOString());
-			}
+			await context.db.decrementShareDownload(share.id, context.now().toISOString());
 			throw error;
 		}
-		if (upstream.status >= 400) {
-			if (upstream.status >= 500) {
-				await context.db.decrementShareDownload(share.id, context.now().toISOString());
-			}
-			throw AppError.notFound('File không còn tồn tại');
-		}
-		const headers = new Headers();
-		headers.set('content-type', file.contentType || 'application/octet-stream');
-		headers.set('content-disposition', `attachment; filename*=UTF-8''${encodeRfc5987(file.name)}`);
-		headers.set('cache-control', 'private, no-store');
-		headers.set('accept-ranges', 'bytes');
-		const contentLength = upstream.headers.get('content-length');
-		if (contentLength) headers.set('content-length', contentLength);
-		const contentRange = upstream.headers.get('content-range');
-		if (contentRange) headers.set('content-range', contentRange);
-		return new Response(upstream.body, {
-			status: upstream.status,
-			headers: { ...Object.fromEntries(headers.entries()), 'x-share-token': 'redacted' },
+		return { share, file, target };
+	};
+
+	// Redirect (302) tới presigned GET — KHÔNG stream file qua Worker.
+	app.get('/share/download', async (c) => {
+		const { target } = await authorizeDownload(c.req.raw, c.get('quotaMode') ?? 'NORMAL');
+		return new Response(null, {
+			status: 302,
+			headers: { location: target.url, 'cache-control': 'private, no-store' },
+		});
+	});
+
+	// Share page cần URL để fetch trực tiếp từ B2 (giữ token trong header, không đưa
+	// token vào query string). Response chỉ là JSON nhỏ — không chứa byte file.
+	app.get('/share/download-url', async (c) => {
+		const { file, target } = await authorizeDownload(c.req.raw, c.get('quotaMode') ?? 'NORMAL');
+		return json({
+			url: target.url,
+			expiresAt: target.expiresAt,
+			fileName: file.name,
+			size: file.size,
+			contentType: file.contentType,
 		});
 	});
 

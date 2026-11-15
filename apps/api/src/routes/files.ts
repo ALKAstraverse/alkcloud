@@ -12,7 +12,6 @@ import { recordAudit } from '../lib/audit.js';
 import { decodeFileCursor, encodeFileCursor } from '../lib/cursor.js';
 import { encodeRfc5987, json, mapDbConflict, parseJsonBody } from '../lib/http.js';
 import { assertCapability, degradationHeaders } from '../lib/quota-guard.js';
-import { assertRangeSatisfiable } from '../lib/range.js';
 import { requireOwner, type AppEnv } from '../middleware/auth.js';
 
 export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
@@ -326,21 +325,19 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		assertCapability(mode, 'allowOwnerDownload');
 		const file = await context.db.getFile(c.req.param('id'));
 		if (!file || file.deletedAt) throw AppError.notFound('Không tìm thấy file');
-		const range = assertRangeSatisfiable(c.req.header('range'), file.size);
-		const upstream = await context.storage.getObject(file.objectKey, range ?? undefined);
-		const headers = new Headers();
-		headers.set('content-type', file.contentType || 'application/octet-stream');
-		headers.set(
-			'content-disposition',
-			`attachment; filename*=UTF-8''${encodeRfc5987(file.name)}`,
-		);
-		headers.set('cache-control', 'private, no-store');
-		headers.set('accept-ranges', 'bytes');
-		const contentLength = upstream.headers.get('content-length');
-		if (contentLength) headers.set('content-length', contentLength);
-		const contentRange = upstream.headers.get('content-range');
-		if (contentRange) headers.set('content-range', contentRange);
-		return new Response(upstream.body, { status: upstream.status, headers });
+
+		// KHÔNG stream byte qua Worker: redirect (302) tới presigned GET của B2.
+		// Worker chỉ ký URL (vài ms CPU) — trình duyệt tải trực tiếp từ B2.
+		const target = await context.storage.presignGet({
+			key: file.objectKey,
+			expiresInSeconds: 300,
+			responseContentType: file.contentType || 'application/octet-stream',
+			responseContentDisposition: `attachment; filename*=UTF-8''${encodeRfc5987(file.name)}`,
+		});
+		return new Response(null, {
+			status: 302,
+			headers: { location: target.url, 'cache-control': 'private, no-store' },
+		});
 	});
 
 	app.get('/:id/open', async (c) => {

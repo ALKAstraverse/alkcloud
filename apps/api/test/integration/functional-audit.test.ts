@@ -130,7 +130,7 @@ interface UploadSession {
 	mode: string;
 	uploadId?: string;
 	partCount: number;
-	parts: Array<{ partNumber: number }>;
+	parts: Array<{ partNumber: number; url: string; headers?: Record<string, string> }>;
 }
 
 async function createUploadSession(
@@ -159,12 +159,15 @@ async function uploadFile(
 ): Promise<UploadedFile> {
 	const contentType = opts.contentType ?? 'application/octet-stream';
 	const session = await createUploadSession(name, content.byteLength, opts.folderId ?? null);
-	const put = await client.request(`/uploads/${session.uploadSessionId}/content`, {
-		method: 'POST',
+	const target = session.parts[0];
+	assert.ok(target?.url, 'thiếu presigned URL cho part 1');
+	// PUT thẳng presigned URL (B2/s3rver) — file KHÔNG đi qua Worker.
+	const put = await fetch(target.url, {
+		method: 'PUT',
+		headers: { 'content-type': contentType, ...(target.headers ?? {}) },
 		body: content,
-		headers: { 'content-type': contentType },
 	});
-	assert.equal(put.status, 200, `upload nội dung thất bại: ${put.status} ${await put.text()}`);
+	assert.equal(put.status, 200, `PUT lên storage thất bại: ${put.status} ${await put.text()}`);
 	const etag = put.headers.get('etag') ?? 'etag-unknown';
 	const complete = await client.call<{ file: UploadedFile }>(`/uploads/${session.uploadSessionId}/complete`, {
 		method: 'POST',
@@ -445,18 +448,19 @@ describe('functional audit — upload', { skip: SKIP }, () => {
 
 			const parts: Array<{ partNumber: number; etag: string; size: number }> = [];
 			for (let partNumber = 1; partNumber <= session.partCount; partNumber += 1) {
-				const query = new URLSearchParams({
-					partNumber: String(partNumber),
-					uploadId: session.uploadId ?? '',
+				const presigned = await client.call<{
+					parts: Array<{ partNumber: number; url: string; headers?: Record<string, string> }>;
+				}>(`/uploads/${session.uploadSessionId}/parts`, {
+					method: 'POST',
+					json: { uploadId: session.uploadId, partNumbers: [partNumber] },
 				});
-				const put = await client.request(
-					`/uploads/${session.uploadSessionId}/content?${query.toString()}`,
-					{
-						method: 'POST',
-						body: new Uint8Array([1]),
-						headers: { 'content-type': 'application/octet-stream' },
-					},
-				);
+				const target = presigned.body.parts[0]!;
+				// PUT thẳng B2 — byte không đi qua Worker.
+				const put = await fetch(target.url, {
+					method: 'PUT',
+					headers: target.headers ?? {},
+					body: new Uint8Array([1]),
+				});
 				assert.equal(put.status, 200, `upload part ${partNumber} thất bại: ${put.status}`);
 				parts.push({ partNumber, etag: put.headers.get('etag') ?? 'etag-unknown', size: 1 });
 			}

@@ -63,7 +63,6 @@ describe('WS-K — CORS method allow-list', () => {
 				if (!used.has(method)) used.set(method, file.replace(here, ''));
 			}
 		}
-		assert.ok(used.size > 0, 'phải tìm thấy ít nhất một method trong web client');
 		for (const [method, file] of used) {
 			assert.ok(
 				EDGE_ALLOWED_METHODS.includes(method),

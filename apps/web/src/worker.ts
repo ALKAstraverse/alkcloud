@@ -13,11 +13,11 @@
  *   - kể cả khi response 307 bị cache (Location cũ), path đó vẫn phục vụ SPA của
  *     deployment **hiện tại** ⇒ người dùng luôn chạy code mới nhất.
  *
- * Web app không được phụ thuộc vào việc CSP có cho phép host nào ngoài `self` và
- * `api.alk.xx.kg`:
- *   - Upload đi qua API (`POST /api/v1/uploads/:id/content`) rồi API chuyển tiếp
- *     tới B2 qua relay ⇒ không cần `connect-src` tới host B2.
- *   - Download dùng `location.assign` (navigation) ⇒ không bị `connect-src` chặn.
+ * Kiến trúc file (không stream byte qua Worker):
+ *   - Upload: browser PUT thẳng presigned URL của B2 (multipart từng part) ⇒
+ *     `connect-src` phải cho host B2; API chỉ ký URL + ghi metadata D1.
+ *   - Download: navigation tới presigned GET của B2 (SharePage fetch trực tiếp
+ *     URL đó) ⇒ byte không đi qua Worker free plan.
  */
 
 interface Env {
@@ -54,9 +54,8 @@ export const CONTENT_SECURITY_POLICY =
 	"default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; " +
 	"style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data:; font-src 'self'; " +
-	// `connect-src` cho phép host B2 (presigned PUT trực tiếp — đường fallback
-	// của client) và host API. Đường chính vẫn là proxy qua API
-	// (`POST /uploads/:id/content`) nên upload **không phụ thuộc** CSP này.
+	// `connect-src` cho host B2: browser PUT trực tiếp part lên presigned URL
+	// (upload) và SharePage fetch presigned GET (download). API chỉ ký URL.
 	"connect-src 'self' https://api.alk.xx.kg https://s3.ca-east-006.backblazeb2.com; " +
 	"object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
