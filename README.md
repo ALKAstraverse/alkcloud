@@ -31,3 +31,5 @@ Repo **không chứa secret**. Mọi credential (token Cloudflare, key B2, `AUTH
 ## Tài liệu
 
 Bắt đầu từ [`docs/00-executive-summary.md`](docs/00-executive-summary.md); vận hành: [`docs/23-OPERATIONS-RUNBOOK.md`](docs/23-OPERATIONS-RUNBOOK.md); thay đổi gần nhất: [`CHANGELOG.md`](CHANGELOG.md).
+
+> **Ghi chú:** workflow CI (`.github/workflows/ci.yml`) không được đưa vào bản public này; các bước kiểm tra tương đương chạy local bằng `npm run verify` + `./infra/verify-all.sh` (mô tả ở [`docs/30-CI-QUALITY-GATE.md`](docs/30-CI-QUALITY-GATE.md)).
