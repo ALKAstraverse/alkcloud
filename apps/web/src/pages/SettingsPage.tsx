@@ -270,9 +270,7 @@ function SecuritySection({ onRefresh }: { onRefresh: () => void }) {
 								required
 								onChange={(event) => setNewPassword(event.target.value)}
 							/>
-							<span className="field__hint">
-								Tối thiểu 12 ký tự. Dùng câu dài dễ nhớ thay vì ký tự ngẫu nhiên.
-							</span>
+							<span className="field__hint">Tối thiểu 12 ký tự.</span>
 						</div>
 						<div className="field">
 							<label className="field__label" htmlFor="confirm-password">

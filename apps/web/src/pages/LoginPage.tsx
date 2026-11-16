@@ -308,11 +308,7 @@ export function LoginPage({ bootstrapped, onAuthenticated }: LoginPageProps) {
 									</button>
 								</div>
 								{capsLock ? <span className="field__hint">Caps Lock đang bật.</span> : null}
-								{mode === 'bootstrap' ? (
-									<span className="field__hint">
-										Mật khẩu được băm trong trình duyệt; không thể khôi phục nếu mất mã dự phòng.
-									</span>
-								) : null}
+
 							</div>
 						) : (
 							<div className="field">
@@ -344,7 +340,7 @@ export function LoginPage({ bootstrapped, onAuthenticated }: LoginPageProps) {
 									onChange={(event) => setSetupToken(event.target.value)}
 									required
 									autoComplete="off"
-									placeholder="Dán setup token từ máy chủ"
+									placeholder="Setup token"
 									style={{ fontFamily: 'var(--font-mono)' }}
 								/>
 							</div>
@@ -386,10 +382,7 @@ export function LoginPage({ bootstrapped, onAuthenticated }: LoginPageProps) {
 						) : null}
 					</div>
 
-					<p className="auth__legal">
-						AlkCloud không gửi email và không có “quên mật khẩu” truyền thống — hãy dùng mã khôi phục đã lưu.
-						Brute-force bị chặn ở tầng API.
-					</p>
+					<p className="auth__legal">Đăng nhập bằng mã khôi phục nếu quên mật khẩu.</p>
 				</div>
 			</main>
 		</div>

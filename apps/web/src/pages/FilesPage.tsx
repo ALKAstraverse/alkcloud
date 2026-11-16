@@ -1090,7 +1090,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 						<div className="manager">
 							{mode !== 'NORMAL' ? (
 								<InlineNotice tone="warning" title={`Chế độ ${quotaModeLabel(mode)}`}>
-									Hệ thống đang hạn chế một số thao tác để bảo vệ dung lượng. Tải lên có thể bị tạm dừng.
+									Dung lượng gần đầy — một số thao tác đang bị hạn chế.
 								</InlineNotice>
 							) : null}
 
@@ -1271,13 +1271,13 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 											<EmptyState
 												icon="magnifyingGlass"
 												title="Không tìm thấy tệp phù hợp"
-												description={`Không có tệp nào khớp với “${query}”. Thử từ khoá khác hoặc xoá bộ lọc.`}
+												description="Không có kết quả." 
 												action={{ label: 'Xoá tìm kiếm', onClick: () => setSearchInput(''), icon: 'xmark' }}
 											/>
 										) : (
 											<EmptyState
 												title="Thư mục còn trống"
-												description="Kéo thả tệp vào đây hoặc bấm Tải lên để bắt đầu. Bạn cũng có thể tạo thư mục để sắp xếp."
+												description="Thư viện trống."
 												action={{ label: 'Tải tệp lên', onClick: () => fileInput.current?.click(), icon: 'cloudArrowUp' }}
 												secondaryAction={{ label: 'Tạo thư mục', onClick: () => setDialog({ kind: 'new-folder' }), icon: 'folderPlus' }}
 											/>
@@ -1490,7 +1490,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 															{selected.has(`folder:${folder.id}`) ? <Icon name="check" /> : null}
 														</span>
 													) : null}
-														<span role="cell" className="drive__name" title="Bấm để chọn · bấm đúp để mở">
+														<span role="cell" className="drive__name" title={folder.name}>
 														<span className="drive__icon tone-folder">
 															<Icon name="folder" />
 														</span>
@@ -1563,7 +1563,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 																{selected.has(`file:${file.id}`) ? <Icon name="check" /> : null}
 															</span>
 														) : null}
-															<span role="cell" className="drive__name" title="Bấm để chọn · bấm đúp để mở">
+															<span role="cell" className="drive__name" title={file.name}>
 															<span className={`drive__icon ${kind.tone}`}>
 																<Icon name={kind.icon} />
 															</span>
@@ -1653,7 +1653,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 										<EmptyState
 											icon="trashCan"
 											title="Thùng rác trống"
-											description="Tệp và thư mục bạn xoá sẽ nằm ở đây; tự động xoá vĩnh viễn sau 30 ngày hoặc xoá ngay bằng nút Xoá vĩnh viễn."
+											description="Không có mục nào."
 											action={{ label: 'Về tệp của tôi', onClick: () => navigateTo('files'), icon: 'folder' }}
 										/>
 									) : (
@@ -1859,6 +1859,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 			/>
 			<ShareDialog
 				open={dialog.kind === 'share'}
+				targetType={dialog.kind === 'share' ? dialog.targetType : 'file'}
 				onClose={() => setDialog({ kind: 'none' })}
 				onSubmit={async (input) => {
 					if (dialog.kind !== 'share') throw new Error('Hộp thoại đã đóng');
@@ -1966,7 +1967,6 @@ function FolderCard({
 					onOpen();
 				}
 			}}
-			title="Bấm để chọn · bấm đúp để mở"
 		>
 			{selectionMode ? (
 				<span
@@ -2062,7 +2062,6 @@ function FileCard({
 					onOpen();
 				}
 			}}
-			title="Bấm để chọn · bấm đúp để mở"
 		>
 			{selectionMode ? (
 				<span

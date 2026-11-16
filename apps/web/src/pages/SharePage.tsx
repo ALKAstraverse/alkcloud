@@ -233,7 +233,7 @@ export function SharePage({ token }: SharePageProps) {
 							<Icon name="cloud" />
 						</span>
 						<div className="share__title">Đang mở liên kết…</div>
-						<p className="share__note">Đang kiểm tra hiệu lực của liên kết chia sẻ.</p>
+						<p className="share__note">Đang mở…</p>
 					</section>
 				) : !info ? (
 					<section className="share__card" role="alert">
@@ -241,10 +241,7 @@ export function SharePage({ token }: SharePageProps) {
 							<Icon name="circleXmark" />
 						</span>
 						<h1 className="share__title">Không mở được liên kết</h1>
-						<p className="share__note">
-							{error ?? 'Liên kết không tồn tại, đã hết hạn hoặc đã bị thu hồi.'} Hãy liên hệ người gửi để xin
-							liên kết mới.
-						</p>
+						<p className="share__note">{error ?? 'Liên kết không hợp lệ hoặc đã hết hạn.'}</p>
 					</section>
 				) : (
 					<section className="share__card">
@@ -298,11 +295,8 @@ export function SharePage({ token }: SharePageProps) {
 										required
 										autoFocus
 										autoComplete="off"
-										placeholder="Nhập mật khẩu người gửi đã đưa"
+										placeholder="Mật khẩu"
 									/>
-									<span className="field__hint">
-										Mật khẩu được băm ngay trong trình duyệt — AlkCloud không nhận mật khẩu gốc.
-									</span>
 								</div>
 								<Button variant="primary" type="submit" size="lg" block loading={unlocking} icon="lock">
 									Mở khoá và xem tệp
@@ -394,11 +388,7 @@ export function SharePage({ token }: SharePageProps) {
 							</InlineNotice>
 						) : null}
 
-						<p className="share__note">
-							{isFolder
-								? 'Người nhận có thể xem và tải các tệp trong thư mục này. Người gửi có thể thu hồi bất kỳ lúc nào.'
-								: 'Liên kết chỉ để tải xuống — không xem trước, không chỉnh sửa. Người gửi có thể thu hồi bất kỳ lúc nào.'}
-						</p>
+
 					</section>
 				)}
 			</main>

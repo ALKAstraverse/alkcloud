@@ -5,6 +5,24 @@
 
 ---
 
+## [Unreleased] — 16/11/2026 — Bỏ hướng dẫn thừa trong UI (gọn, chuyên nghiệp)
+
+> Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-web` version `c1766c43-4f7b-49d5-98df-11f2144a830b` (entry `/app/DdyD13lA/`).
+> Kiểm thử: `typecheck` PASS · `npm test` **PASS=437 · FAIL=0** · `build` PASS.
+
+### Changed
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| **Hộp thoại** | Bỏ phần mô tả hướng dẫn ở "Tạo thư mục", "Đổi tên", "Di chuyển", "Chia sẻ" (tiêu đề + nút đã đủ rõ) |
+| **Hộp thoại chia sẻ** | Bỏ ghi chú dài sau khi tạo link; placeholder gọn ("Mật khẩu", "Tên thư mục"); tiêu đề đổi theo mục tiêu: **"Chia sẻ thư mục"** / "Chia sẻ tệp" |
+| **Trang chia sẻ công khai** | Rút gọn thông báo trạng thái ("Đang mở…"), bỏ ghi chú kỹ thuật về hashing và ghi chú cuối trang; thông báo lỗi còn 1 dòng |
+| **Trang thư viện** | Empty state gọn ("Thư viện trống." / "Không có kết quả." / "Không có mục nào."); bỏ tooltip hướng dẫn "Bấm để chọn · bấm đúp để mở" (tooltip dòng danh sách giờ hiện tên mục khi tên bị cắt); cảnh báo quota rút gọn |
+| **Trang đăng nhập** | Bỏ ghi chú kỹ thuật về hashing; legal note còn 1 câu; placeholder "Setup token" |
+| **Trang cài đặt** | Hint mật khẩu chỉ còn "Tối thiểu 12 ký tự." |
+
+---
+
 ## [Unreleased] — 16/11/2026 — Nút "Chọn" (tickbox) + CHIA SẺ THƯ MỤC
 
 > Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `f38eef4d-9748-41c0-952c-ce8a334bcf96`

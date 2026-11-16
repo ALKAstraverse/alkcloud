@@ -52,7 +52,6 @@ export function NewFolderDialog({
 		<Dialog
 			open={open}
 			title="Tạo thư mục mới"
-			description="Thư mục giúp gom nhóm tệp theo chủ đề. Có thể đổi tên hoặc di chuyển sau."
 			icon="folderPlus"
 			size="sm"
 			onClose={onClose}
@@ -68,7 +67,7 @@ export function NewFolderDialog({
 						value={name}
 						autoFocus
 						maxLength={120}
-						placeholder="Ví dụ: Hồ sơ 2026"
+						placeholder="Tên thư mục"
 						onChange={(event) => setName(event.target.value)}
 					/>
 					{error ? (
@@ -138,7 +137,6 @@ export function RenameDialog({
 		<Dialog
 			open={open}
 			title="Đổi tên"
-			description="Tên hiển thị trong thư viện. Tệp đã tải lên không bị ảnh hưởng."
 			icon="pen"
 			size="sm"
 			onClose={onClose}
@@ -278,7 +276,6 @@ export function MoveDialog({
 		<Dialog
 			open={open}
 			title="Di chuyển"
-			description="Chọn thư mục đích cho mục đang chọn."
 			icon="move"
 			size="sm"
 			onClose={onClose}
@@ -365,10 +362,13 @@ export interface ShareResult {
 
 export function ShareDialog({
 	open,
+	targetType = 'file',
 	onClose,
 	onSubmit,
 }: {
 	open: boolean;
+	/** Chia sẻ tệp hay thư mục — đổi tiêu đề hộp thoại. */
+	targetType?: 'file' | 'folder';
 	onClose: () => void;
 	onSubmit: (input: { password: string | null; expiresInDays: number }) => Promise<ShareResult>;
 }) {
@@ -427,8 +427,7 @@ export function ShareDialog({
 	return (
 		<Dialog
 			open={open}
-			title="Chia sẻ tệp"
-			description="Tạo link tải xuống. Ai có link đều tải được, trừ khi bạn đặt mật khẩu."
+			title={targetType === 'folder' ? 'Chia sẻ thư mục' : 'Chia sẻ tệp'}
 			icon="shareNodes"
 			onClose={onClose}
 			footer={
@@ -468,12 +467,7 @@ export function ShareDialog({
 							</span>
 						) : null}
 					</div>
-					{result.hasPassword ? (
-						<p className="share__note">
-							Chia sẻ mật khẩu với người nhận qua kênh riêng — AlkCloud không gửi email và không lưu mật
-							khẩu dạng rõ.
-						</p>
-					) : null}
+
 				</div>
 			) : (
 				<form
@@ -517,12 +511,9 @@ export function ShareDialog({
 								autoComplete="new-password"
 								value={password}
 								minLength={8}
-								placeholder="Tối thiểu 8 ký tự"
+								placeholder="Mật khẩu"
 								onChange={(event) => setPassword(event.target.value)}
 							/>
-							<span className="field__hint">
-								Mật khẩu được băm trong trình duyệt trước khi gửi lên máy chủ.
-							</span>
 						</div>
 					) : null}
 					{error ? (
