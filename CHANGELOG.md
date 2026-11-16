@@ -71,12 +71,14 @@ khoá cây là `folder_id`/`parent_id` — `path` không lưu chuỗi):
 
 ---
 
-## [Unreleased] — 15/11/2026 — Grid view: bỏ checkbox thường trực
+## [Unreleased] — 15/11/2026 — Grid view: bỏ hẳn tickbox trên card
 
-- Card lưới **không còn hiện checkbox mặc định**: checkbox nằm overlay góc trên-trái, chỉ hiện khi hover/focus, khi card được chọn, hoặc khi đang ở **chế độ chọn** (đã chọn ≥1 mục) — theo pattern Google Drive.
-- **Touch**: nhấn giữ ~450 ms trên card để vào chế độ chọn (rung nhẹ nếu máy hỗ trợ); chạm 1 lần vẫn mở file/thư mục như cũ ⇒ vẫn chọn được trên điện thoại (giữ fix BUG-31).
-- Vùng bấm checkbox **32×32** (WCAG 2.5.8) nhưng không chiếm chỗ trong layout; card tắt bôi đen chữ/callout khi nhấn giữ.
-- Verify: `typecheck` + **419 test PASS** + `vite build` PASS; kiểm tra ảnh light/dark.
+- **View thẻ (grid) không còn tickbox nào** trên card — trả lại diện tích và tránh cảm giác "checkbox trôi" như các cloud drive khác.
+- Chọn vẫn đầy đủ: **bấm card** (desktop) để chọn, **nhấn giữ ~450 ms** (touch, có rung nhẹ) để bật chế độ chọn, **bấm đúp** để mở file/thư mục. Card được chọn có viền + nền accent, thanh thao tác chọn (xoá/di chuyển/…) hiện phía trên.
+- **View bảng (list) giữ nguyên** cột tickbox + ô "Chọn tất cả".
+- Đã bỏ luôn CSS overlay checkbox (`.file-card__check`) và thuộc tính `data-selection` không còn dùng.
+- Đã deploy web: version `b865f25d-e5b8-4a64-9892-609cdead2b2d`, entry `/app/Br7faPxt/`.
+- Verify: `typecheck` + **420 test PASS** + `vite build` PASS.
 
 ---
 

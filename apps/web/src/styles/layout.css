@@ -1865,69 +1865,7 @@
 /* Checkbox chọn trong card lưới: overlay góc trên-trái (kiểu Google Drive).
    Ẩn mặc định; hiện khi hover/focus, khi card đã chọn, hoặc khi đang ở chế độ chọn
    (bất kỳ mục nào được chọn) — trên touch vào chế độ chọn bằng nhấn giữ. */
-.file-card__check {
-	position: absolute;
-	top: var(--space-1);
-	left: var(--space-1);
-	z-index: 3;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	/* Vùng bấm ≥24px (WCAG 2.5.8) nhưng không chiếm chỗ trong layout. */
-	width: 32px;
-	height: 32px;
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity var(--dur-fast) var(--ease-out);
-}
-
-.file-card__check input[type='checkbox'] {
-	appearance: none;
-	width: 16px;
-	height: 16px;
-	margin: 0;
-	border: 1.5px solid var(--border-strong);
-	border-radius: var(--radius-xs);
-	background: var(--surface);
-	box-shadow: var(--shadow-xs);
-	display: inline-grid;
-	place-content: center;
-	cursor: pointer;
-}
-
-.file-card__check input[type='checkbox']::after {
-	content: '';
-	width: 9px;
-	height: 9px;
-	transform: scale(0);
-	clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
-	background: #fff;
-	transition: transform var(--dur-fast) var(--ease-spring);
-}
-
-.file-card__check input[type='checkbox']:checked {
-	background: var(--accent);
-	border-color: var(--accent);
-}
-
-.file-card__check input[type='checkbox']:checked::after {
-	transform: scale(1);
-}
-
-.file-card__check input[type='checkbox']:focus-visible {
-	box-shadow: var(--ring);
-	outline: none;
-}
-
-.file-card:hover .file-card__check,
-.file-card:focus-within .file-card__check,
-.file-card[data-selected='true'] .file-card__check,
-.file-grid[data-selection='true'] .file-card__check {
-	opacity: 1;
-	pointer-events: auto;
-}
-
-/* Hàng card: nội dung (checkbox đã tách ra overlay). */
+/* Hàng card: nội dung (view thẻ không có tickbox — chọn bằng click/long-press). */
 .file-card {
 	padding: var(--space-4);
 	/* Nhấn giữ để chọn trên touch: không bôi đen chữ / không mở callout. */

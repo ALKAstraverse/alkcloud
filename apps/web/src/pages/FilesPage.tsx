@@ -113,7 +113,7 @@ function useLongPress(onLongPress: () => void) {
 	const onPointerDown = useCallback(
 		(event: ReactPointerEvent<HTMLElement>) => {
 			if (event.pointerType !== 'touch') return;
-			if ((event.target as HTMLElement).closest('.file-card__check, .file-card__actions')) return;
+			if ((event.target as HTMLElement).closest('.file-card__actions')) return;
 			cancel();
 			fired.current = false;
 			timer.current = window.setTimeout(() => {
@@ -1086,7 +1086,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														<span className="manager__section-title">Thư mục</span>
 														<span className="manager__section-count">{sortedFolders.length}</span>
 													</div>
-													<div className="file-grid" data-selection={selected.size > 0 ? 'true' : 'false'}>
+													<div className="file-grid">
 														{sortedFolders.map((folder) => (
 															<FolderCard
 																key={folder.id}
@@ -1130,7 +1130,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														<span className="manager__section-title">Tệp</span>
 														<span className="manager__section-count">{sortedFiles.length}</span>
 													</div>
-													<div className="file-grid" data-selection={selected.size > 0 ? 'true' : 'false'}>
+													<div className="file-grid">
 														{sortedFiles.map((file) => (
 															<FileCard
 																key={file.id}
@@ -1280,7 +1280,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 															onChange={() => toggleSelect('folder', folder.id)}
 														/>
 													</label>
-													<span role="cell" className="drive__name" title="Bấm đúp để mở thư mục">
+													<span role="cell" className="drive__name" title="Bấm để chọn · bấm đúp để mở">
 														<span className="drive__icon tone-folder">
 															<Icon name="folder" />
 														</span>
@@ -1346,7 +1346,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 																onChange={() => toggleSelect('file', file.id)}
 															/>
 														</label>
-														<span role="cell" className="drive__name" title="Bấm đúp để tải xuống">
+														<span role="cell" className="drive__name" title="Bấm để chọn · bấm đúp để mở">
 															<span className={`drive__icon ${kind.tone}`}>
 																<Icon name={kind.icon} />
 															</span>
@@ -1651,7 +1651,7 @@ function FolderCard({
 					onOpen();
 				}
 			}}
-			title="Bấm đúp để mở thư mục"
+			title="Bấm để chọn · bấm đúp để mở"
 		>
 			<div className="file-card__actions" onClick={(event) => event.stopPropagation()}>
 				<Menu
@@ -1661,14 +1661,6 @@ function FolderCard({
 				/>
 			</div>
 			<div className="file-card__top">
-				<label className="file-card__check" onClick={(event) => event.stopPropagation()}>
-					<input
-						type="checkbox"
-						checked={selected}
-						aria-label={`Chọn thư mục ${folder.name}`}
-						onChange={onToggle}
-					/>
-				</label>
 				<div className="file-card__open">
 					<span className="file-card__preview">
 						<span className="file-card__icon tone-folder">
@@ -1733,7 +1725,7 @@ function FileCard({
 					onOpen();
 				}
 			}}
-			title="Bấm đúp để tải xuống"
+			title="Bấm để chọn · bấm đúp để mở"
 		>
 			<div className="file-card__actions" onClick={(event) => event.stopPropagation()}>
 				<Menu
@@ -1743,9 +1735,6 @@ function FileCard({
 				/>
 			</div>
 			<div className="file-card__top">
-				<label className="file-card__check" onClick={(event) => event.stopPropagation()}>
-					<input type="checkbox" checked={selected} aria-label={`Chọn tệp ${file.name}`} onChange={onToggle} />
-				</label>
 				<div className="file-card__open">
 					<span className="file-card__preview">
 						<span className={`file-card__icon ${kind.tone}`}>
