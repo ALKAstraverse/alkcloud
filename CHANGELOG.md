@@ -75,10 +75,10 @@ khoá cây là `folder_id`/`parent_id` — `path` không lưu chuỗi):
 
 - **View thẻ (grid) không còn tickbox nào** trên card — trả lại diện tích và tránh cảm giác "checkbox trôi" như các cloud drive khác.
 - Chọn vẫn đầy đủ: **bấm card** (desktop) để chọn, **nhấn giữ ~450 ms** (touch, có rung nhẹ) để bật chế độ chọn, **bấm đúp** để mở file/thư mục. Card được chọn có viền + nền accent, thanh thao tác chọn (xoá/di chuyển/…) hiện phía trên.
-- **View bảng (list) giữ nguyên** cột tickbox + ô "Chọn tất cả".
-- Đã bỏ luôn CSS overlay checkbox (`.file-card__check`) và thuộc tính `data-selection` không còn dùng.
-- Đã deploy web: version `b865f25d-e5b8-4a64-9892-609cdead2b2d`, entry `/app/Br7faPxt/`.
-- Verify: `typecheck` + **420 test PASS** + `vite build` PASS.
+- **View bảng (list) cũng bỏ cột tickbox** (và ô "Chọn tất cả" ở header): chọn bằng **bấm dòng**, bấm đúp để mở, chạm tên để mở trên touch; thay bằng nút chữ **"Chọn tất cả" / "Bỏ chọn tất cả"** trên toolbar (cùng nhóm với nút đổi kiểu hiển thị).
+- Đã bỏ luôn CSS overlay checkbox (`.file-card__check`), cột `.drive__check`/`.drive__th--check` và thuộc tính `data-selection` không còn dùng; lưới cột của bảng + bố cục mobile được thu lại tương ứng.
+- Đã deploy web: version `902e4aab-382a-4cfd-9ee2-7355b27dab64`, entry `/app/CSLQY3na/`.
+- Verify: `typecheck` + **420 test PASS** + `vite build` PASS + `check:limits` PASS.
 
 ---
 

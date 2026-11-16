@@ -944,6 +944,16 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 											/>
 										</label>
 										<div className="toolbar__group toolbar__group--secondary">
+											{totalItems > 0 ? (
+												<Button
+													size="sm"
+													icon="check"
+													onClick={toggleSelectAll}
+													title={allSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+												>
+													{allSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+												</Button>
+											) : null}
 											<div className="segmented" role="group" aria-label="Kiểu hiển thị">
 												<button
 													type="button"
@@ -1178,16 +1188,6 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 									) : (
 									<div className="drive" role="table" aria-label="Tệp và thư mục">
 										<div className="drive__head" role="row">
-											<span role="columnheader" className="drive__th drive__th--check">
-												<label className="checkbox checkbox--tap drive__check">
-													<input
-														type="checkbox"
-														checked={allSelected}
-														aria-label="Chọn tất cả"
-														onChange={toggleSelectAll}
-													/>
-												</label>
-											</span>
 											<span
 												role="columnheader"
 												className="drive__th"
@@ -1272,14 +1272,6 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														openContextMenu(event, { type: 'folder', id: folder.id, name: folder.name })
 													}
 												>
-													<label role="cell" className="checkbox checkbox--tap drive__check" onClick={(event) => event.stopPropagation()}>
-														<input
-															type="checkbox"
-															checked={selected.has(`folder:${folder.id}`)}
-															aria-label={`Chọn thư mục ${folder.name}`}
-															onChange={() => toggleSelect('folder', folder.id)}
-														/>
-													</label>
 													<span role="cell" className="drive__name" title="Bấm để chọn · bấm đúp để mở">
 														<span className="drive__icon tone-folder">
 															<Icon name="folder" />
@@ -1338,14 +1330,6 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 															openContextMenu(event, { type: 'file', id: file.id, name: file.name })
 														}
 													>
-														<label role="cell" className="checkbox checkbox--tap drive__check" onClick={(event) => event.stopPropagation()}>
-															<input
-																type="checkbox"
-																checked={selected.has(`file:${file.id}`)}
-																aria-label={`Chọn tệp ${file.name}`}
-																onChange={() => toggleSelect('file', file.id)}
-															/>
-														</label>
 														<span role="cell" className="drive__name" title="Bấm để chọn · bấm đúp để mở">
 															<span className={`drive__icon ${kind.tone}`}>
 																<Icon name={kind.icon} />

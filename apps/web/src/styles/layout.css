@@ -648,7 +648,7 @@
 .drive__head,
 .drive__row {
 	display: grid;
-	grid-template-columns: 40px minmax(0, 1fr) 150px 110px 44px;
+	grid-template-columns: minmax(0, 1fr) 150px 110px 44px;
 	align-items: center;
 	gap: var(--space-4);
 	padding: 0 var(--space-5);
@@ -668,15 +668,6 @@
 	letter-spacing: 0.02em;
 }
 
-.drive__check {
-	justify-content: center;
-	/* Vùng bấm checkbox trong bảng ≥24px (WCAG 2.5.8). */
-	padding-top: var(--space-3);
-	padding-bottom: var(--space-3);
-	margin-top: calc(-1 * var(--space-3));
-	margin-bottom: calc(-1 * var(--space-3));
-}
-
 /* Ô tiêu đề cột: role=columnheader bọc nút sắp xếp. */
 .drive__th {
 	display: flex;
@@ -686,10 +677,6 @@
 
 .drive__th > .drive__sort {
 	flex: 1;
-}
-
-.drive__th--check {
-	justify-content: center;
 }
 
 .drive__sort {
@@ -851,7 +838,7 @@
 @media (max-width: 1180px) {
 	.drive__head,
 	.drive__row {
-		grid-template-columns: 40px minmax(0, 1fr) 130px 96px 44px;
+		grid-template-columns: minmax(0, 1fr) 130px 96px 44px;
 	}
 }
 
@@ -861,17 +848,12 @@
 	}
 
 	.drive__row {
-		grid-template-columns: 32px 32px minmax(0, 1fr) 40px;
+		grid-template-columns: 32px minmax(0, 1fr) 40px;
 		grid-template-areas:
-			'check icon title actions'
-			'check icon meta actions';
+			'icon title actions'
+			'icon meta actions';
 		row-gap: 0;
 		padding: var(--space-4) var(--space-5);
-	}
-
-	.drive__row .drive__check {
-		grid-area: check;
-		align-self: center;
 	}
 
 	.drive__row .drive__name,
