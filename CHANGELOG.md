@@ -5,6 +5,34 @@
 
 ---
 
+## [Unreleased] — 15/11/2026 — Đường dẫn rút gọn + bộ chọn thư mục kiểu Windows
+
+> Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `4384bb69-c177-4587-95cb-789c5550f05c`
+> · Worker `alkcloud-web` version `1ad9528a-7dc7-4bcc-9472-17c072f2af10` (entry `/app/B3oUr1AH/`).
+> Kiểm thử: `typecheck` PASS · `npm test` **PASS=426 · FAIL=0** · `build` PASS · E2E production **PASS=22 · FAIL=0**.
+
+### Added
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| **`GET /folders/tree`** | Cây thư mục phẳng (id, name, parentId, depth) — 1 request thay vì gọi lặp từng cấp; giới hạn 1000 node |
+| **`apps/web/src/lib/path.ts`** | `buildPath()` · `shortenPath()` (rút gọn kiểu Explorer: giữ phần cuối, tiền tố `…/`; tên quá dài thì cắt giữa) · `pathOfNode()` |
+| **Hộp thoại "Di chuyển"** | Chuyển từ `<select>` optgroup sang **cây thư mục kiểu Windows**: thụt lề theo cấp, chevron thu gọn/mở rộng, click để chọn — **không còn ô tickbox**; thanh trên hiển thị đường dẫn đích đã rút gọn (tooltip hiện đường dẫn đầy đủ) |
+
+### Changed
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| **An toàn khi di chuyển** | Tự động loại trừ thư mục đang di chuyển **và toàn bộ nhánh con cháu** khỏi cây chọn đích ⇒ không tạo vòng lặp thư mục (trước: `<select>` chỉ có cha + con trực tiếp) |
+| **Tải cây thư mục** | `FilesPage` nạp `/folders/tree` **lazy** — chỉ gọi khi mở hộp thoại "Di chuyển" |
+
+### Test
+
+- `apps/web/test/path.test.ts`: `buildPath` / `shortenPath` (rút gọn đầu, cắt giữa tên quá dài) / `pathOfNode`.
+- `apps/api/test/product-journey.test.ts`: `GET /folders/tree` trả đủ node, `parentId` + `depth` đúng.
+
+---
+
 ## [Unreleased] — 15/11/2026 — Xoá vĩnh viễn ⇒ tự thu hồi share
 
 > Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `b4daf28d-ab80-4f09-8031-f7a30ce208d4`

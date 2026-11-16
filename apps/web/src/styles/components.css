@@ -200,6 +200,105 @@
 	font-weight: var(--weight-semibold);
 }
 
+/* Cây chọn thư mục kiểu Windows (hộp thoại Di chuyển) — không ô tickbox. */
+.move-path {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	background: var(--surface-muted);
+	font-size: var(--text-xs);
+	min-width: 0;
+}
+
+.move-path__label {
+	color: var(--text-muted);
+	flex: none;
+}
+
+.move-path__value {
+	font-family: var(--font-mono);
+	color: var(--text);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	text-align: left;
+}
+
+.move-tree {
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	background: var(--surface);
+	max-height: 280px;
+	overflow-y: auto;
+	padding: var(--space-2) 0;
+}
+
+.move-tree__row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	width: 100%;
+	padding: var(--space-2) var(--space-3);
+	border: 0;
+	background: transparent;
+	color: var(--text);
+	font-size: var(--text-sm);
+	text-align: left;
+	cursor: pointer;
+	min-width: 0;
+}
+
+.move-tree__row:hover:not(:disabled) {
+	background: var(--surface-hover);
+}
+
+.move-tree__row[data-selected='true'] {
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-weight: var(--weight-medium);
+}
+
+.move-tree__row:disabled {
+	cursor: not-allowed;
+	opacity: 0.45;
+}
+
+.move-tree__row svg {
+	width: 15px;
+	height: 15px;
+	flex: none;
+}
+
+.move-tree__toggle {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	flex: none;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+
+.move-tree__toggle:hover {
+	background: var(--border);
+}
+
+.move-tree__spacer {
+	width: 16px;
+	flex: none;
+}
+
+.move-tree__name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .field__hint {
 	font-size: var(--text-xs);
 	color: var(--text-muted);

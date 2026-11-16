@@ -107,6 +107,20 @@ describe('WS-F — E2E hành trình sản phẩm', () => {
 		assert.equal(childResponse.status, 201);
 		const child = (await childResponse.json()) as { folder: { id: string } };
 
+		// Cây thư mục phẳng (1 request) cho bộ chọn thư mục kiểu Windows.
+		const treeResponse = await harness.request('/folders/tree');
+		assert.equal(treeResponse.status, 200);
+		const treeBody = (await treeResponse.json()) as {
+			folders: Array<{ id: string; name: string; parentId: string | null; depth: number }>;
+		};
+		const rootNode = treeBody.folders.find((folder) => folder.id === root.folder.id);
+		const childNode = treeBody.folders.find((folder) => folder.id === child.folder.id);
+		assert.ok(rootNode, 'cây phải chứa thư mục gốc');
+		assert.ok(childNode, 'cây phải chứa thư mục con');
+		assert.equal(rootNode.parentId, null);
+		assert.equal(childNode.parentId, root.folder.id);
+		assert.equal(childNode.depth, rootNode.depth + 1, 'depth phải tăng theo cấp');
+
 		// ── Bước 3: upload file vào thư mục con ───────────────────────────
 		step('upload file');
 		const fileId = await uploadFile(harness, 'báo cáo.txt', 'Nội dung báo cáo năm 2026', child.folder.id);

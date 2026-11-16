@@ -8,6 +8,7 @@ import {
 	getQuota,
 	getUsage,
 	listFilesAll,
+	listFolderTree,
 	listFolders,
 	listTrash,
 	listTrashFolders,
@@ -193,6 +194,8 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 	const [dragging, setDragging] = useState(false);
 
 	const [dialog, setDialog] = useState<DialogState>({ kind: 'none' });
+	// Cây thư mục đầy đủ — nạp khi mở hộp thoại "Di chuyển" (1 request).
+	const [folderTree, setFolderTree] = useState<FolderEntry[]>([]);
 	const [contextMenu, setContextMenu] = useState<{
 		x: number;
 		y: number;
@@ -313,6 +316,22 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 		} else result = a.name.localeCompare(b.name, 'vi');
 		return sortDir === 'asc' ? result : -result;
 	};
+
+	useEffect(() => {
+		if (dialog.kind !== 'move' || folderTree.length > 0) return;
+		let cancelled = false;
+		void (async () => {
+			try {
+				const result = await listFolderTree();
+				if (!cancelled) setFolderTree(result.folders);
+			} catch {
+				// Không nạp được cây thư mục ⇒ hộp thoại vẫn dùng được phần thư mục cha.
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [dialog.kind, folderTree.length]);
 
 	const sortedFolders = useMemo(() => {
 		const list = [...folders];
@@ -1550,10 +1569,9 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 			/>
 			<MoveDialog
 				open={dialog.kind === 'move'}
-				folders={sortedFolders.filter(
-					(folder) => !(dialog.kind === 'move' && dialog.target.type === 'folder' && folder.id === dialog.target.id),
-				)}
-				ancestors={breadcrumb.slice(0, -1)}
+				tree={folderTree}
+				currentFolderId={folderId}
+				excludeFolderId={dialog.kind === 'move' && dialog.target.type === 'folder' ? dialog.target.id : null}
 				onClose={() => setDialog({ kind: 'none' })}
 				onSubmit={(destination) => (dialog.kind === 'move' ? handleMove(dialog.target, destination) : Promise.resolve())}
 			/>

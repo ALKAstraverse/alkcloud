@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Dialog, ConfirmDialog } from './Dialog.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
 import type { FolderEntry } from '../lib/api.js';
 import { formatDateTime } from '../lib/format.js';
+import { shortenPath } from '../lib/path.js';
 
 /* --------------------------------------------------------------- new folder */
 export function NewFolderDialog({
@@ -175,31 +176,109 @@ export function RenameDialog({
 }
 
 /* -------------------------------------------------------------------- move */
+export interface MoveTreeNode {
+	id: string;
+	name: string;
+	parentId: string | null;
+	depth: number;
+}
+
+/**
+ * Hộp thoại "Di chuyển" kiểu Windows:
+ *   - cây thư mục (thụt lề theo cấp) — **không có ô tickbox**, click là chọn;
+ *   - thanh đường dẫn rút gọn ("…/to/folder") ở trên;
+ *   - không cho chọn chính thư mục đang di chuyển hoặc thư mục con của nó.
+ */
 export function MoveDialog({
 	open,
-	folders,
-	ancestors,
+	tree,
+	currentFolderId,
+	excludeFolderId,
 	onClose,
 	onSubmit,
 }: {
 	open: boolean;
-	folders: FolderEntry[];
-	ancestors: { id: string; name: string }[];
+	tree: MoveTreeNode[];
+	currentFolderId: string | null;
+	/** Thư mục đang di chuyển (loại trừ khỏi cây + mọi nhánh con). */
+	excludeFolderId?: string | null;
 	onClose: () => void;
 	onSubmit: (folderId: string | null) => Promise<void>;
 }) {
 	const [target, setTarget] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+	const byId = useMemo(() => new Map(tree.map((node) => [node.id, node])), [tree]);
+
+	// Nhánh không được chọn: thư mục đang di chuyển + toàn bộ con cháu của nó.
+	const excluded = useMemo(() => {
+		const blocked = new Set<string>();
+		if (!excludeFolderId) return blocked;
+		blocked.add(excludeFolderId);
+		let changed = true;
+		while (changed) {
+			changed = false;
+			for (const node of tree) {
+				if (node.parentId && blocked.has(node.parentId) && !blocked.has(node.id)) {
+					blocked.add(node.id);
+					changed = true;
+				}
+			}
+		}
+		return blocked;
+	}, [tree, excludeFolderId]);
+
+	// Node nào đang hiện: ẩn con của các node đã thu gọn.
+	const visible = useMemo(() => {
+		const hidden = new Set<string>();
+		for (const node of tree) {
+			if (!collapsed.has(node.id)) continue;
+			for (const child of tree) {
+				if (child.parentId === node.id) hidden.add(child.id);
+			}
+		}
+		let changed = true;
+		while (changed) {
+			changed = false;
+			for (const node of tree) {
+				if (node.parentId && hidden.has(node.parentId) && !hidden.has(node.id)) {
+					hidden.add(node.id);
+					changed = true;
+				}
+			}
+		}
+		return tree.filter((node) => !hidden.has(node.id));
+	}, [tree, collapsed]);
+
+	const hasChildren = useMemo(() => {
+		const ids = new Set(tree.map((node) => node.parentId));
+		return new Set([...ids].filter((id): id is string => Boolean(id)));
+	}, [tree]);
 
 	useEffect(() => {
 		if (open) {
-			// Mặc định = thư mục cha gần nhất (nếu không có thì thư viện gốc).
-			setTarget(ancestors.length > 0 ? ancestors[ancestors.length - 1]!.id : null);
+			// Mặc định = thư mục đang xem; không chọn trùng vị trí hiện tại của mục.
+			setTarget(currentFolderId);
 			setError(null);
 			setBusy(false);
+			setCollapsed(new Set());
 		}
-	}, [open, ancestors]);
+	}, [open, currentFolderId]);
+
+	const targetPath = useMemo(() => {
+		if (target === null) return '/';
+		const segments: string[] = [];
+		let current = byId.get(target);
+		const guard = new Set<string>();
+		while (current && !guard.has(current.id)) {
+			guard.add(current.id);
+			segments.unshift(current.name);
+			current = current.parentId ? byId.get(current.parentId) : undefined;
+		}
+		return segments.length === 0 ? '/' : `/${segments.join('/')}`;
+	}, [target, byId]);
 
 	const submit = async (event: React.FormEvent) => {
 		event.preventDefault();
@@ -215,6 +294,15 @@ export function MoveDialog({
 		}
 	};
 
+	const toggle = (id: string) => {
+		setCollapsed((current) => {
+			const next = new Set(current);
+			if (next.has(id)) next.delete(id);
+			else next.add(id);
+			return next;
+		});
+	};
+
 	return (
 		<Dialog
 			open={open}
@@ -224,48 +312,66 @@ export function MoveDialog({
 			size="sm"
 			onClose={onClose}
 		>
-			<form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-				<div className="field">
-					<label className="field__label" htmlFor="move-target">
-						Thư mục đích
-					</label>
-					<select
-						id="move-target"
-						className="select"
-						value={target ?? ''}
-						onChange={(event) => setTarget(event.target.value === '' ? null : event.target.value)}
-					>
-						<option value="">Thư viện (gốc)</option>
-						{ancestors.length > 0 ? (
-							<optgroup label="Thư mục cha">
-								{ancestors.map((node, index) => (
-									<option key={node.id} value={node.id}>
-										{'↳ '.repeat(index + 1)}
-										{node.name}
-									</option>
-								))}
-							</optgroup>
-						) : null}
-						{folders.length > 0 ? (
-							<optgroup label="Thư mục con của thư mục hiện tại">
-								{folders.map((folder) => (
-									<option key={folder.id} value={folder.id}>
-										{folder.name}
-									</option>
-								))}
-							</optgroup>
-						) : null}
-					</select>
-					<span className="field__hint">
-						Có thể chọn thư mục cha (để đưa mục lên một cấp) hoặc thư viện gốc.
-					</span>
-					{error ? (
-						<span className="field__error" role="alert">
-							<Icon name="circleExclamation" />
-							{error}
-						</span>
-					) : null}
+			<form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+				<div className="move-path" title={targetPath}>
+					<span className="move-path__label">Đích:</span>
+					<span className="move-path__value">{shortenPath(targetPath, 42)}</span>
 				</div>
+				<div className="move-tree" role="tree" aria-label="Cây thư mục">
+					<button
+						type="button"
+						role="treeitem"
+						className="move-tree__row"
+						data-selected={target === null}
+						onClick={() => setTarget(null)}
+					>
+						<span className="move-tree__spacer" aria-hidden="true" />
+						<Icon name="hardDrive" />
+						<span className="move-tree__name">Thư viện (gốc)</span>
+					</button>
+					{visible.map((node) => {
+						const blocked = excluded.has(node.id);
+						const isSelected = target === node.id;
+						const hasChild = hasChildren.has(node.id);
+						const isCollapsed = collapsed.has(node.id);
+						return (
+							<div key={node.id} className="move-tree__row-wrap">
+								<button
+									type="button"
+									role="treeitem"
+									className="move-tree__row"
+									data-selected={isSelected}
+									data-blocked={blocked}
+									aria-selected={isSelected}
+									disabled={blocked}
+									style={{ paddingLeft: `calc(var(--space-4) + ${node.depth} * var(--space-4))` }}
+									onClick={() => setTarget(node.id)}
+								>
+									<span
+										role="button"
+										tabIndex={-1}
+										aria-label={isCollapsed ? 'Mở rộng' : 'Thu gọn'}
+										className="move-tree__toggle"
+										onClick={(event) => {
+											event.stopPropagation();
+											if (hasChild) toggle(node.id);
+										}}
+									>
+										{hasChild ? <Icon name={isCollapsed ? 'chevronRight' : 'chevronDown'} /> : null}
+									</span>
+									<Icon name="folder" />
+									<span className="move-tree__name">{node.name}</span>
+								</button>
+							</div>
+						);
+					})}
+				</div>
+				{error ? (
+					<span className="field__error" role="alert">
+						<Icon name="circleExclamation" />
+						{error}
+					</span>
+				) : null}
 				<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-4)' }}>
 					<Button variant="secondary" onClick={onClose} disabled={busy}>
 						Huỷ

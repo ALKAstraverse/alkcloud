@@ -322,6 +322,11 @@ export async function listFolders(parentId?: string | null): Promise<{ folders: 
 	return apiRequest(`/folders${suffix}`);
 }
 
+/** Cây thư mục phẳng (id, name, parentId, depth) — dùng cho bộ chọn thư mục kiểu Windows. */
+export async function listFolderTree(): Promise<{ folders: FolderEntry[] }> {
+	return apiRequest('/folders/tree');
+}
+
 export async function createFolder(name: string, parentId: string | null): Promise<{ folder: FolderEntry }> {
 	return apiRequest('/folders', { method: 'POST', body: { name, parentId } });
 }

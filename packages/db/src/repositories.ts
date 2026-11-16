@@ -677,6 +677,21 @@ export class Database {
 	}
 
 	/**
+	 * Toàn bộ thư mục đang hoạt động (phẳng, có `parentId` + `depth`).
+	 *
+	 * Dùng cho bộ chọn thư mục kiểu Windows (cây thư mục trong hộp thoại
+	 * "Di chuyển"): 1 request, không cần gọi lặp từng cấp.
+	 */
+	async listAllFolders(limit = 1000): Promise<Folder[]> {
+		const result = await this.driver.query(
+			`SELECT * FROM folders WHERE deleted_at IS NULL
+			 ORDER BY depth ASC, name_lower ASC LIMIT ?`,
+			[limit],
+		);
+		return result.rows.map(mapFolder);
+	}
+
+	/**
 	 * Đổi tên file. `expectedVersion` (tuỳ chọn) ⇒ chỉ update khi version hiện tại
 	 * khớp (optimistic concurrency). Trả `false` khi không có dòng nào khớp
 	 * (file đã bị xoá/sửa bởi request khác) ⇒ route trả 409.

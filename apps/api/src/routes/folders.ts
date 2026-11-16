@@ -26,6 +26,21 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 		});
 	});
 
+	// Cây thư mục phẳng (id, name, parentId, depth) — 1 request cho bộ chọn
+	// thư mục kiểu Windows trong hộp thoại "Di chuyển".
+	app.get('/tree', async (c) => {
+		const folders = await context.db.listAllFolders(1000);
+		return json({
+			folders: folders.map((folder) => ({
+				id: folder.id,
+				name: folder.name,
+				parentId: folder.parentId,
+				depth: folder.depth,
+				createdAt: folder.createdAt,
+			})),
+		});
+	});
+
 	app.get('/trash', async (c) => {
 		const folders = await context.db.listTrashFolders(100);
 		return json({
