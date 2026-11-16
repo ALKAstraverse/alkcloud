@@ -71,7 +71,10 @@ export interface FileItem {
 
 export interface Share {
 	id: Id;
-	fileId: Id;
+	/** Mục tiêu là tệp (share tệp) — null khi share thư mục. */
+	fileId: Id | null;
+	/** Mục tiêu là thư mục (share thư mục) — null khi share tệp. */
+	folderId: Id | null;
 	tokenHash: string;
 	passwordHash: string | null;
 	/** Salt per-share (dùng trong công thức hash mật khẩu share). */

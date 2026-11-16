@@ -148,7 +148,8 @@ export interface FolderEntry {
 
 export interface ShareEntry {
 	id: string;
-	fileId: string;
+	fileId: string | null;
+	folderId: string | null;
 	expiresAt: string;
 	maxDownloads: number | null;
 	downloadCount: number;
@@ -430,7 +431,10 @@ export async function listShares(fileId: string): Promise<{ shares: ShareEntry[]
 }
 
 export async function createShare(input: {
-	fileId: string;
+	/** Share tệp — bỏ trống khi chia sẻ thư mục. */
+	fileId?: string;
+	/** Share thư mục — bỏ trống khi chia sẻ tệp. */
+	folderId?: string;
 	expiresInDays?: number;
 	maxDownloads?: number | null;
 	passwordVerifier?: string | null;

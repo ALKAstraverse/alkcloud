@@ -118,14 +118,22 @@ export const uploadCompleteSchema = z.object({
 	checksumSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable().default(null),
 });
 
-export const shareCreateSchema = z.object({
-	fileId: idSchema,
-	expiresInDays: z.number().int().min(1).max(90).default(DEFAULT_SHARE_TTL_DAYS),
-	maxDownloads: z.number().int().min(1).max(10_000).nullable().default(null),
-	passwordVerifier: z.string().regex(/^[0-9a-f]{64}$/).nullable().default(null),
-	passwordSalt: z.string().min(8).max(128).nullable().default(null),
-	passwordParams: z.string().min(8).max(256).nullable().default(null),
-});
+export const shareCreateSchema = z
+	.object({
+		/** Share tệp — bỏ trống khi chia sẻ thư mục. */
+		fileId: idSchema.optional(),
+		/** Share thư mục — bỏ trống khi chia sẻ tệp. */
+		folderId: idSchema.optional(),
+		expiresInDays: z.number().int().min(1).max(90).default(DEFAULT_SHARE_TTL_DAYS),
+		maxDownloads: z.number().int().min(1).max(10_000).nullable().default(null),
+		passwordVerifier: z.string().regex(/^[0-9a-f]{64}$/).nullable().default(null),
+		passwordSalt: z.string().min(8).max(128).nullable().default(null),
+		passwordParams: z.string().min(8).max(256).nullable().default(null),
+	})
+	.refine((value) => Boolean(value.fileId) !== Boolean(value.folderId), {
+		message: 'Phải chọn đúng một mục tiêu: tệp (fileId) hoặc thư mục (folderId)',
+		path: ['fileId'],
+	});
 
 export const shareUpdateSchema = z.object({
 	expiresInDays: z.number().int().min(1).max(90).optional(),

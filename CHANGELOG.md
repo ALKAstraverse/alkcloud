@@ -5,6 +5,38 @@
 
 ---
 
+## [Unreleased] — 16/11/2026 — Nút "Chọn" (tickbox) + CHIA SẺ THƯ MỤC
+
+> Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `f38eef4d-9748-41c0-952c-ce8a334bcf96`
+> · Worker `alkcloud-web` version `72fbf9d4-13a9-4875-952c-69e8135d9178` (entry `/app/Chfa7jza/`).
+> Migration D1: `0008_folder_shares.sql` **đã áp dụng remote** (backup trước đó: `backups/alkcloud-d1-20261116T071555.sql`).
+> Kiểm thử: `typecheck` PASS · `npm test` **PASS=437 · FAIL=0** · `build` PASS · E2E production **PASS=22 · FAIL=0** · smoke test production share thư mục OK.
+
+### Added
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| **Chia sẻ THƯ MỤC** | `POST /shares` nhận `folderId` (đúng một mục tiêu: `fileId` **hoặc** `folderId`). Trang share hiển thị **cây thư mục**: mở thư mục con, xem kích thước tệp, tải từng tệp (302 presigned B2 — **không stream byte qua Worker**) |
+| **`GET /public/share/folder?path=`** | Liệt kê nội dung thư mục được chia sẻ. Thư mục con **phải nằm trong cây được chia sẻ** ⇒ không xem được cây ngoài |
+| **Tải tệp trong thư mục chia sẻ** | `GET /public/share/download?fileId=` + `/download-url?fileId=` — kiểm tra tệp nằm trong subtree thư mục được chia sẻ (`listFileIdsInFolderSubtree`) trước khi ký URL |
+| **Migration `0008_folder_shares.sql`** | Dựng lại bảng `shares`: `file_id` nullable + `folder_id` mới, CHECK đúng-một-mục-tiêu, `ON DELETE CASCADE` giữ nguyên; thêm index `idx_shares_folder*` |
+| **Thư mục trong UI** | Menu thư mục (context menu + menu thẻ) có **"Chia sẻ"** ⇒ mở hộp thoại tạo link cho thư mục |
+| **Thu hồi share khi purge thư mục** | `DELETE /folders/:id/purge` thu hồi share của thư mục + cây con (audit `share.revoke`, `reason: folder_purge`); cron retention cũng thu hồi trước khi xoá |
+
+### Changed
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| **Chế độ chọn (tickbox)** | Thay nút "Chọn tất cả" bằng nút **"Chọn"**: bấm ⇒ hiện tickbox trên từng mục (lưới, danh sách Drive, **và thùng rác**), bấm lần 2 ⇒ "Huỷ chọn". Trong chế độ chọn: thanh bulk hiện **"Chọn tất cả / Bỏ chọn tất cả"** + số mục đã chọn + thao tác hàng loạt |
+| **Bulk thùng rác** | Chọn nhiều mục trong thùng rác ⇒ **Khôi phục** hàng loạt và **Xoá vĩnh viễn** hàng loạt (tệp trước, thư mục sau) qua hộp thoại xác nhận |
+| **Share entry** | `shareCreateSchema` refine: phải có đúng một mục tiêu (`fileId` XOR `folderId`) ⇒ gửi cả hai ⇒ 400 |
+
+### Test
+
+- `apps/api/test/folder-share.test.ts` (5 case): tạo share thư mục + `info.kind=folder`; duyệt cây + tải tệp trong cây + chặn tệp ngoài cây; share có mật khẩu (403 trước khi mở khoá); purge thư mục ⇒ share chết (404); `fileId` + `folderId` cùng lúc ⇒ 400.
+
+---
+
 ## [Unreleased] — 15/11/2026 — Sửa UI thùng rác (dùng được trên mobile)
 
 > Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-web` version `0f0f2d0a-9875-4b92-bf4c-43e9176e1781` (entry `/app/CV9cg0Hm/`).

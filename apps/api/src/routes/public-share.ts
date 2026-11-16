@@ -50,6 +50,24 @@ export function createPublicShareRoutes(context: AppContext): Hono<AppEnv> {
 
 	const shareCookieName = (shareId: string) => `${SHARE_COOKIE_PREFIX}${shareId}`;
 
+	/** Share thư mục (không có file_id) vs share tệp. */
+	const isFolderShare = (share: { fileId: string | null; folderId: string | null }) =>
+		!share.fileId && Boolean(share.folderId);
+
+	/**
+	 * Share đã mở khoá chưa (share có mật khẩu cần grant hợp lệ).
+	 *
+	 * Dùng chung cho info/unlock/list/download ⇒ không lộ metadata tệp/thư mục
+	 * trước khi người dùng nhập đúng mật khẩu.
+	 */
+	const isUnlocked = async (share: { id: string; passwordHash: string | null }, request: Request) => {
+		if (!share.passwordHash) return true;
+		const headerGrant = request.headers.get(SHARE_GRANT_HEADER);
+		const cookies = parseCookies(request.headers.get('cookie'));
+		const grant = headerGrant ?? cookies[shareCookieName(share.id)];
+		return grant ? await verifyShareGrant(grant, share.id) : false;
+	};
+
 	const signShareGrant = async (shareId: string, expiresAtMs: number): Promise<string> => {
 		const payload = `${shareId}.${expiresAtMs}`;
 		const signature = await hmacHex(context.config.authPepper!, payload);
@@ -67,22 +85,39 @@ export function createPublicShareRoutes(context: AppContext): Hono<AppEnv> {
 
 	app.get('/share/info', async (c) => {
 		const { share } = await resolveShare(c.req.raw);
-		const file = await context.db.getFile(share.fileId);
+
+		// ── Share thư mục ────────────────────────────────────────────────
+		if (isFolderShare(share)) {
+			const folder = await context.db.getFolder(share.folderId!);
+			if (!folder || folder.deletedAt) throw AppError.notFound('Thư mục không còn tồn tại');
+			const unlocked = await isUnlocked(share, c.req.raw);
+			return json({
+				share: {
+					kind: 'folder',
+					folderId: folder.id,
+					folderName: unlocked ? folder.name : null,
+					requiresPassword: Boolean(share.passwordHash),
+					unlocked,
+					expiresAt: share.expiresAt,
+					maxDownloads: share.maxDownloads,
+					downloadCount: share.downloadCount,
+					downloadsRemaining:
+						share.maxDownloads === null ? null : Math.max(0, share.maxDownloads - share.downloadCount),
+				},
+			});
+		}
+
+		const file = await context.db.getFile(share.fileId!);
 		if (!file || file.deletedAt) throw AppError.notFound('File không còn tồn tại');
 
 		// Share có mật khẩu: KHÔNG lộ metadata (tên file, kích thước, content-type)
 		// trước khi người dùng mở khoá — nếu không, kẻ tấn công chỉ cần token là
 	// biết tên + kích thước file mà không cần mật khẩu.
-		let unlocked = true;
-		if (share.passwordHash) {
-			const headerGrant = c.req.header(SHARE_GRANT_HEADER);
-			const cookies = parseCookies(c.req.header('cookie'));
-			const grant = headerGrant ?? cookies[shareCookieName(share.id)];
-			unlocked = grant ? await verifyShareGrant(grant, share.id) : false;
-		}
+		const unlocked = await isUnlocked(share, c.req.raw);
 
 		return json({
 			share: {
+				kind: 'file',
 				fileName: unlocked ? file.name : null,
 				size: unlocked ? file.size : null,
 				contentType: unlocked ? file.contentType : null,
@@ -145,10 +180,36 @@ export function createPublicShareRoutes(context: AppContext): Hono<AppEnv> {
 			targetId: share.id,
 			ip,
 		});
-		const file = await context.db.getFile(share.fileId);
+		if (isFolderShare(share)) {
+			const folder = await context.db.getFolder(share.folderId!);
+			return json(
+				{
+					share: {
+						kind: 'folder',
+						folderId: folder?.id ?? null,
+						folderName: folder?.name ?? null,
+						expiresAt: share.expiresAt,
+						requiresPassword: Boolean(share.passwordHash),
+						unlocked: true,
+						maxDownloads: share.maxDownloads,
+						downloadCount: share.downloadCount,
+						downloadsRemaining:
+							share.maxDownloads === null
+								? null
+								: Math.max(0, share.maxDownloads - share.downloadCount),
+					},
+					grant,
+				},
+				200,
+				{ 'set-cookie': cookie },
+			);
+		}
+
+		const file = await context.db.getFile(share.fileId!);
 		return json(
 			{
 				share: {
+					kind: 'file',
 					fileName: file?.name ?? null,
 					size: file?.size ?? 0,
 					contentType: file?.contentType ?? 'application/octet-stream',
@@ -191,7 +252,17 @@ export function createPublicShareRoutes(context: AppContext): Hono<AppEnv> {
 			}
 		}
 
-		const file = await context.db.getFile(share.fileId);
+		let file = null;
+		if (isFolderShare(share)) {
+			// Share thư mục: tệp phải nằm trong cây thư mục được chia sẻ.
+			const fileId = new URL(request.url).searchParams.get('fileId');
+			if (!fileId) throw AppError.badRequest('Thiếu fileId');
+			const allowed = new Set(await context.db.listFileIdsInFolderSubtree(share.folderId!));
+			if (!allowed.has(fileId)) throw AppError.notFound('File không thuộc thư mục được chia sẻ');
+			file = await context.db.getFile(fileId);
+		} else {
+			file = await context.db.getFile(share.fileId!);
+		}
 		if (!file || file.deletedAt) throw AppError.notFound('File không còn tồn tại');
 
 		assertRangeSatisfiable(request.headers.get('range'), file.size);
@@ -238,6 +309,51 @@ export function createPublicShareRoutes(context: AppContext): Hono<AppEnv> {
 			fileName: file.name,
 			size: file.size,
 			contentType: file.contentType,
+		});
+	});
+
+	/**
+	 * Liệt kê nội dung thư mục được chia sẻ (share thư mục).
+	 *
+	 * `path` = id thư mục con cần xem (bỏ trống ⇒ gốc thư mục được chia sẻ).
+	 * Thư mục con phải nằm trong cây được chia sẻ ⇒ không xem được cây ngoài.
+	 */
+	app.get('/share/folder', async (c) => {
+		const { share } = await resolveShare(c.req.raw);
+		if (!isFolderShare(share)) throw AppError.badRequest('Share này không chia sẻ thư mục');
+		if (!(await isUnlocked(share, c.req.raw))) {
+			throw AppError.forbidden('Cần mở khoá share trước khi xem');
+		}
+
+		const rootFolder = await context.db.getFolder(share.folderId!);
+		if (!rootFolder || rootFolder.deletedAt) throw AppError.notFound('Thư mục không còn tồn tại');
+
+		const requested = c.req.query('path');
+		let current = rootFolder;
+		if (requested && requested !== rootFolder.id) {
+			const inSubtree = await context.db.listFolderIdsInSubtree(rootFolder.id);
+			if (!inSubtree.has(requested)) throw AppError.notFound('Thư mục không thuộc cây được chia sẻ');
+			const folder = await context.db.getFolder(requested);
+			if (!folder || folder.deletedAt) throw AppError.notFound('Thư mục không còn tồn tại');
+			current = folder;
+		}
+
+		const [folders, files] = await Promise.all([
+			context.db.listFolders(current.id),
+			context.db.listFiles({ folderId: current.id, limit: 200, offset: 0 }),
+		]);
+
+		return json({
+			folder: { id: current.id, name: current.name },
+			isRoot: current.id === rootFolder.id,
+			folders: folders.map((folder) => ({ id: folder.id, name: folder.name })),
+			files: files.map((file) => ({
+				id: file.id,
+				name: file.name,
+				size: file.size,
+				contentType: file.contentType,
+				updatedAt: file.updatedAt,
+			})),
 		});
 	});
 

@@ -14,12 +14,16 @@ export function createShareAdminRoutes(context: AppContext): Hono<AppEnv> {
 
 	app.get('/', async (c) => {
 		const fileId = c.req.query('fileId');
-		if (!fileId) throw AppError.badRequest('Thiếu fileId');
-		const shares = await context.db.listSharesForFile(fileId);
+		const folderId = c.req.query('folderId');
+		if (!fileId && !folderId) throw AppError.badRequest('Thiếu fileId hoặc folderId');
+		const shares = fileId
+			? await context.db.listSharesForFile(fileId)
+			: await context.db.listSharesForFolder(folderId!);
 		return json({
 			shares: shares.map((share) => ({
 				id: share.id,
 				fileId: share.fileId,
+				folderId: share.folderId,
 				expiresAt: share.expiresAt,
 				maxDownloads: share.maxDownloads,
 				downloadCount: share.downloadCount,
@@ -39,8 +43,16 @@ export function createShareAdminRoutes(context: AppContext): Hono<AppEnv> {
 		if (!parsed.success) throw AppError.badRequest('Dữ liệu share không hợp lệ');
 		const input = parsed.data;
 
-		const file = await context.db.getFile(input.fileId);
-		if (!file || file.deletedAt) throw AppError.notFound('Không tìm thấy file');
+		// Share tệp HOẶC share thư mục — đúng một mục tiêu (schema đã refine).
+		let file: Awaited<ReturnType<typeof context.db.getFile>> = null;
+		let folder: Awaited<ReturnType<typeof context.db.getFolder>> = null;
+		if (input.fileId) {
+			file = await context.db.getFile(input.fileId);
+			if (!file || file.deletedAt) throw AppError.notFound('Không tìm thấy file');
+		} else {
+			folder = await context.db.getFolder(input.folderId!);
+			if (!folder || folder.deletedAt) throw AppError.notFound('Không tìm thấy thư mục');
+		}
 
 		const token = randomToken(32);
 		const tokenHash = await sha256Hex(token);
@@ -62,7 +74,8 @@ export function createShareAdminRoutes(context: AppContext): Hono<AppEnv> {
 		const now = context.now().toISOString();
 		const share = await context.db.createShare({
 			id: newId('shr'),
-			fileId: file.id,
+			fileId: file?.id ?? null,
+			folderId: folder?.id ?? null,
 			tokenHash,
 			passwordHash,
 			passwordSalt: input.passwordSalt ?? null,
@@ -77,13 +90,19 @@ export function createShareAdminRoutes(context: AppContext): Hono<AppEnv> {
 			targetType: 'share',
 			targetId: share.id,
 			ip: c.get('clientIp'),
-			metadata: { fileId: file.id, expiresAt: share.expiresAt, maxDownloads: share.maxDownloads },
+			metadata: {
+				fileId: share.fileId,
+				folderId: share.folderId,
+				expiresAt: share.expiresAt,
+				maxDownloads: share.maxDownloads,
+			},
 		});
 		return json(
 			{
 				share: {
 					id: share.id,
 					fileId: share.fileId,
+					folderId: share.folderId,
 					expiresAt: share.expiresAt,
 					maxDownloads: share.maxDownloads,
 					hasPassword: Boolean(share.passwordHash),

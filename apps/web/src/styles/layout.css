@@ -637,6 +637,64 @@
 	}
 }
 
+/* --- Ô chọn (tickbox) — chỉ hiện khi bật chế độ chọn --- */
+.file-card__check,
+.drive__check,
+.file-list__check {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	flex: none;
+	border: 1.5px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	color: var(--surface);
+	cursor: pointer;
+	transition:
+		background-color var(--dur-fast) var(--ease-out),
+		border-color var(--dur-fast) var(--ease-out);
+}
+
+.file-card__check[data-checked='true'],
+.drive__check[data-checked='true'],
+.file-list__check[data-checked='true'] {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: var(--surface);
+}
+
+.file-card__check svg,
+.drive__check svg,
+.file-list__check svg {
+	width: 12px;
+	height: 12px;
+}
+
+/* Tickbox nằm đè lên góc trên của thẻ lưới. */
+.file-card__check {
+	position: absolute;
+	top: var(--space-3);
+	left: var(--space-3);
+	z-index: 2;
+	box-shadow: var(--shadow-xs);
+}
+
+/* Cột tickbox trong bảng Drive (danh sách). */
+.drive__row:has(> .drive__check) {
+	grid-template-columns: 28px minmax(0, 1fr) 150px 110px 44px;
+}
+
+.drive__check {
+	justify-self: center;
+}
+
+/* Ô chọn trong thùng rác: cột đầu của dòng. */
+.file-list__row--trash:has(> .file-list__check) {
+	gap: var(--space-3);
+}
+
 /* --- drive-style file table (Google Drive / Nextcloud) --- */
 .drive {
 	background: var(--surface);
@@ -1573,6 +1631,66 @@
 	line-height: 1.6;
 }
 
+/* --- Share thư mục: duyệt cây + tải tệp --- */
+.share__folder {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	text-align: left;
+}
+
+.share__folder-list {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	overflow: hidden;
+}
+
+.share__folder-row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	width: 100%;
+	padding: var(--space-3) var(--space-4);
+	border: 0;
+	border-bottom: 1px solid var(--border);
+	background: var(--surface);
+	color: var(--text);
+	font-size: var(--text-sm);
+	text-align: left;
+	cursor: pointer;
+	min-width: 0;
+}
+
+.share__folder-row:last-child {
+	border-bottom: 0;
+}
+
+button.share__folder-row:hover {
+	background: var(--surface-hover);
+}
+
+.share__folder-row svg {
+	width: 16px;
+	height: 16px;
+	flex: none;
+	color: var(--text-muted);
+}
+
+.share__folder-name {
+	flex: 1;
+	min-width: 0;
+	font-weight: var(--weight-medium);
+}
+
+.share__folder-size {
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+
 /* ------------------------------------------------------------ responsive */
 @media (max-width: 1180px) {
 	.file-list__row {
@@ -1746,6 +1864,19 @@
 
 	.file-list__row--trash .file-list__actions .btn {
 		flex: none;
+	}
+
+	/* Có ô chọn ⇒ thêm cột tickbox bên trái. */
+	.file-list__row--trash:has(> .file-list__check) {
+		grid-template-columns: 20px 32px minmax(0, 1fr);
+		grid-template-areas:
+			'check icon text'
+			'check actions actions';
+	}
+
+	.file-list__row--trash:has(> .file-list__check) > .file-list__check {
+		grid-area: check;
+		align-self: start;
 	}
 
 	.bulk-bar {

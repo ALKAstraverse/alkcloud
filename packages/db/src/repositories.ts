@@ -92,7 +92,8 @@ function mapFile(row: Row): FileItem {
 function mapShare(row: Row): Share {
 	return {
 		id: str(row.id),
-		fileId: str(row.file_id),
+		fileId: nullableStr(row.file_id),
+		folderId: nullableStr(row.folder_id),
 		tokenHash: str(row.token_hash),
 		passwordHash: nullableStr(row.password_hash),
 		passwordSalt: nullableStr(row.password_salt),
@@ -170,7 +171,10 @@ export interface FileInput {
 
 export interface ShareInput {
 	id: Id;
-	fileId: Id;
+	/** Share tệp — null khi share thư mục. */
+	fileId: Id | null;
+	/** Share thư mục — null (hoặc bỏ trống) khi share tệp. */
+	folderId?: Id | null;
 	tokenHash: string;
 	passwordHash: string | null;
 	passwordSalt: string | null;
@@ -781,6 +785,18 @@ export class Database {
 	 * Dọn row folder đã xoá mềm quá hạn retention và không còn file tham chiếu.
 	 * Nhờ `ON DELETE CASCADE` trên parent_id, xoá folder cha sẽ dọn luôn cây con.
 	 */
+	/** Các thư mục trong thùng rác đủ hạn và không còn tệp ⇒ sẽ bị purge. */
+	async listFolderIdsEligibleForPurge(olderThan: string, limit = 200): Promise<Id[]> {
+		const result = await this.driver.query<{ id: Id }>(
+			`SELECT id FROM folders
+			 WHERE deleted_at IS NOT NULL AND deleted_at <= ?
+			   AND id NOT IN (SELECT folder_id FROM files WHERE folder_id IS NOT NULL)
+			 LIMIT ?`,
+			[olderThan, limit],
+		);
+		return result.rows.map((row) => row.id);
+	}
+
 	async purgeDeletedFolders(olderThan: string): Promise<number> {
 		const result = await this.driver.run(
 			`DELETE FROM folders
@@ -948,12 +964,13 @@ export class Database {
 	// ---------------------------------------------------------------- shares
 	async createShare(input: ShareInput): Promise<Share> {
 		await this.driver.run(
-			`INSERT INTO shares (id, file_id, token_hash, password_hash, password_salt, password_params, expires_at, max_downloads,
+			`INSERT INTO shares (id, file_id, folder_id, token_hash, password_hash, password_salt, password_params, expires_at, max_downloads,
 				download_count, revoked_at, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)`,
 			[
 				input.id,
-				input.fileId,
+				input.fileId ?? null,
+				input.folderId ?? null,
 				input.tokenHash,
 				input.passwordHash,
 				input.passwordSalt,
@@ -988,6 +1005,38 @@ export class Database {
 			[fileId, limit, offset],
 		);
 		return result.rows.map(mapShare);
+	}
+
+	async listSharesForFolder(folderId: Id, limit = 200, offset = 0): Promise<Share[]> {
+		// SEC-11: luôn có LIMIT.
+		const result = await this.driver.query(
+			'SELECT * FROM shares WHERE folder_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+			[folderId, limit, offset],
+		);
+		return result.rows.map(mapShare);
+	}
+
+	/**
+	 * Thu hồi share của các thư mục (dùng khi purge thư mục / cây thư mục).
+	 *
+	 * Share thư mục còn sống ⇒ người lạ vẫn xem được cây thư mục ⇒ phải thu hồi
+	 * TRƯỚC khi xoá row thư mục.
+	 */
+	async revokeActiveSharesForFolders(folderIds: Id[], now: string): Promise<Id[]> {
+		if (folderIds.length === 0) return [];
+		const revoked: Id[] = [];
+		for (let index = 0; index < folderIds.length; index += 100) {
+			const chunk = folderIds.slice(index, index + 100);
+			const placeholders = chunk.map(() => '?').join(', ');
+			const result = await this.driver.query<{ id: Id }>(
+				`UPDATE shares SET revoked_at = ?, updated_at = ?
+				 WHERE folder_id IN (${placeholders}) AND revoked_at IS NULL
+				 RETURNING id`,
+				[now, now, ...chunk],
+			);
+			for (const row of result.rows) revoked.push(row.id);
+		}
+		return revoked;
 	}
 
 	async updateShare(
@@ -1068,6 +1117,20 @@ export class Database {
 	}
 
 	/** Danh sách id file nằm trong cây thư mục (kể cả file đã xoá mềm). */
+	/** Tập id của toàn bộ thư mục con cháu (không gồm chính nó). */
+	async listFolderIdsInSubtree(id: Id): Promise<Set<Id>> {
+		const result = await this.driver.query<{ id: Id }>(
+			`WITH RECURSIVE subtree(id) AS (
+				SELECT id FROM folders WHERE id = ?
+				UNION ALL
+				SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
+			 )
+			 SELECT id FROM subtree WHERE id != ?`,
+			[id, id],
+		);
+		return new Set(result.rows.map((row) => row.id));
+	}
+
 	async listFileIdsInFolderSubtree(id: Id): Promise<Id[]> {
 		const result = await this.driver.query<{ id: Id }>(
 			`WITH RECURSIVE subtree(id) AS (

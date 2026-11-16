@@ -286,6 +286,24 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 		if (filesInSubtree > 0) {
 			throw AppError.conflict(`Còn ${filesInSubtree} tệp trong thư mục — xoá vĩnh viễn các tệp trước`);
 		}
+
+		// Thu hồi share của thư mục + cây con trước khi xoá ⇒ link chia sẻ thư mục
+		// không sống sót (nếu không, share vẫn còn và cây thư mục vẫn xem được).
+		const now = context.now().toISOString();
+		const subtreeFolders = new Set(await context.db.listFolderIdsInSubtree(folder.id));
+		subtreeFolders.add(folder.id);
+		const revokedShares = await context.db.revokeActiveSharesForFolders([...subtreeFolders], now);
+		for (const shareId of revokedShares) {
+			await recordAudit(context, {
+				action: 'share.revoke',
+				actor: auth?.email ?? 'unknown',
+				targetType: 'share',
+				targetId: shareId,
+				ip: c.get('clientIp'),
+				metadata: { reason: 'folder_purge', folderId: folder.id },
+			});
+		}
+
 		const deleted = await context.db.deleteTrashedFolder(folder.id);
 		if (!deleted) {
 			throw AppError.conflict('Thư mục chưa thể xoá — còn tệp hoặc đã thay đổi');
@@ -296,8 +314,9 @@ export function createFoldersRoutes(context: AppContext): Hono<AppEnv> {
 			targetType: 'folder',
 			targetId: folder.id,
 			ip: c.get('clientIp'),
+			metadata: { revokedShares: revokedShares.length },
 		});
-		return json({ ok: true, mode }, 200, degradationHeaders(mode));
+		return json({ ok: true, mode, revokedShares: revokedShares.length }, 200, degradationHeaders(mode));
 	});
 
 	return app;

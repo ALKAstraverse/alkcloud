@@ -14,10 +14,15 @@ interface SharePageProps {
 }
 
 interface ShareInfo {
+	/** 'file' = share tệp · 'folder' = share thư mục. */
+	kind?: 'file' | 'folder';
 	/** null khi share có mật khẩu và chưa unlock (chống lộ metadata). */
 	fileName: string | null;
 	size: number | null;
 	contentType: string | null;
+	/** Share thư mục: id + tên thư mục gốc. */
+	folderId?: string | null;
+	folderName?: string | null;
 	requiresPassword: boolean;
 	/** Server xác nhận cookie grant còn hiệu lực. */
 	unlocked: boolean;
@@ -25,6 +30,19 @@ interface ShareInfo {
 	maxDownloads: number | null;
 	downloadCount: number;
 	downloadsRemaining: number | null;
+}
+
+interface FolderListing {
+	folder: { id: string; name: string };
+	isRoot: boolean;
+	folders: Array<{ id: string; name: string }>;
+	files: Array<{
+		id: string;
+		name: string;
+		size: number;
+		contentType: string;
+		updatedAt: string;
+	}>;
 }
 
 async function shareRequest<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
@@ -57,6 +75,11 @@ export function SharePage({ token }: SharePageProps) {
 	const [loading, setLoading] = useState(true);
 	const [unlocking, setUnlocking] = useState(false);
 	const [downloading, setDownloading] = useState(false);
+	// Cây thư mục được chia sẻ.
+	const [folderPath, setFolderPath] = useState<string | null>(null);
+	const [folderData, setFolderData] = useState<FolderListing | null>(null);
+	const [folderLoading, setFolderLoading] = useState(false);
+	const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
 	useEffect(() => {
 		if (!token) {
@@ -137,6 +160,54 @@ export function SharePage({ token }: SharePageProps) {
 		}
 	};
 
+	const isFolder = info?.kind === 'folder';
+
+	// Nạp nội dung thư mục được chia sẻ (chỉ khi đã mở khoá nếu có mật khẩu).
+	useEffect(() => {
+		if (!isFolder || !unlocked) return;
+		let cancelled = false;
+		setFolderLoading(true);
+		const query = folderPath ? `?path=${encodeURIComponent(folderPath)}` : '';
+		void (async () => {
+			try {
+				const result = await shareRequest<FolderListing>(`/public/share/folder${query}`, token, {
+					headers: grant ? { 'x-share-grant': grant } : {},
+				});
+				if (!cancelled) setFolderData(result);
+			} catch (caught) {
+				if (!cancelled) {
+					setError(caught instanceof ApiError ? caught.message : 'Không tải được nội dung thư mục');
+				}
+			} finally {
+				if (!cancelled) setFolderLoading(false);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [isFolder, unlocked, folderPath, token, grant]);
+
+	const downloadFolderFile = async (file: { id: string; name: string }) => {
+		setError(null);
+		setDownloadingId(file.id);
+		try {
+			const target = await shareRequest<{ url: string; fileName: string }>(
+				`/public/share/download-url?fileId=${encodeURIComponent(file.id)}`,
+				token,
+				{ headers: grant ? { 'x-share-grant': grant } : {} },
+			);
+			const response = await fetch(target.url);
+			if (!response.ok) {
+				throw new ApiError(response.status, 'download_failed', `Tải thất bại (${response.status})`);
+			}
+			await downloadToFile(response, file.name);
+		} catch (caught) {
+			setError(caught instanceof ApiError ? caught.message : 'Tải thất bại');
+		} finally {
+			setDownloadingId(null);
+		}
+	};
+
 	const kind = info?.fileName ? fileKind(info.fileName, info.contentType) : null;
 
 	return (
@@ -149,7 +220,7 @@ export function SharePage({ token }: SharePageProps) {
 					<span>
 						<span className="brand__name">AlkCloud</span>
 						<span className="brand__tagline" style={{ display: 'block' }}>
-							Chia sẻ tệp
+							Chia sẻ tệp / thư mục
 						</span>
 					</span>
 				</div>
@@ -181,12 +252,21 @@ export function SharePage({ token }: SharePageProps) {
 							<Icon name={kind?.icon ?? 'lock'} />
 						</span>
 						<div>
-							<h1 className="share__title">{info.fileName ?? 'Tệp được bảo vệ'}</h1>
+							<h1 className="share__title">
+								{isFolder ? (info.folderName ?? 'Thư mục được bảo vệ') : (info.fileName ?? 'Tệp được bảo vệ')}
+							</h1>
 							<p className="share__meta" style={{ marginTop: 'var(--space-4)' }}>
-								<span className="share__meta-item">
-									<Icon name="hardDrive" />
-									{info.size !== null ? formatBytes(info.size) : 'Chưa mở khoá'}
-								</span>
+								{isFolder ? (
+									<span className="share__meta-item">
+										<Icon name="folder" />
+										Thư mục được chia sẻ
+									</span>
+								) : (
+									<span className="share__meta-item">
+										<Icon name="hardDrive" />
+										{info.size !== null ? formatBytes(info.size) : 'Chưa mở khoá'}
+									</span>
+								)}
 								<span className="share__meta-item">
 									<Icon name="clock" /> Hết hạn {formatDate(info.expiresAt)}
 								</span>
@@ -230,7 +310,7 @@ export function SharePage({ token }: SharePageProps) {
 							</form>
 						) : null}
 
-						{unlocked ? (
+						{unlocked && !isFolder ? (
 							<Button
 								variant="primary"
 								size="lg"
@@ -243,6 +323,71 @@ export function SharePage({ token }: SharePageProps) {
 							</Button>
 						) : null}
 
+						{unlocked && isFolder ? (
+							<div className="share__folder">
+								{folderPath ? (
+									<Button
+										size="sm"
+										icon="arrowLeft"
+										onClick={() => setFolderPath(null)}
+										style={{ alignSelf: 'flex-start' }}
+									>
+										Về thư mục gốc
+									</Button>
+								) : null}
+								{folderLoading ? (
+									<p className="share__note">Đang tải nội dung thư mục…</p>
+								) : folderData ? (
+									<>
+										{folderData.folders.length > 0 ? (
+											<div className="share__folder-list">
+												{folderData.folders.map((folder) => (
+													<button
+														key={folder.id}
+														type="button"
+														className="share__folder-row"
+														onClick={() => setFolderPath(folder.id)}
+													>
+														<Icon name="folder" />
+														<span className="share__folder-name truncate">{folder.name}</span>
+														<Icon name="chevronRight" />
+													</button>
+												))}
+											</div>
+										) : null}
+										{folderData.files.length > 0 ? (
+											<div className="share__folder-list">
+												{folderData.files.map((file) => {
+													const fileKindInfo = fileKind(file.name, file.contentType);
+													return (
+														<div key={file.id} className="share__folder-row">
+															<Icon name={fileKindInfo.icon} />
+															<span className="share__folder-name truncate" title={file.name}>
+																{file.name}
+															</span>
+															<span className="share__folder-size">{formatBytes(file.size)}</span>
+															<Button
+																size="sm"
+																icon="download"
+																loading={downloadingId === file.id}
+																onClick={() => void downloadFolderFile(file)}
+																aria-label={`Tải ${file.name}`}
+															>
+																Tải
+															</Button>
+														</div>
+													);
+												})}
+											</div>
+										) : null}
+										{folderData.folders.length === 0 && folderData.files.length === 0 ? (
+											<p className="share__note">Thư mục trống.</p>
+										) : null}
+									</>
+								) : null}
+							</div>
+						) : null}
+
 						{error && info ? (
 							<InlineNotice tone="danger" title="Không thực hiện được">
 								{error}
@@ -250,8 +395,9 @@ export function SharePage({ token }: SharePageProps) {
 						) : null}
 
 						<p className="share__note">
-							Liên kết chỉ để tải xuống — không xem trước, không chỉnh sửa. Người gửi có thể thu hồi bất kỳ lúc
-							nào.
+							{isFolder
+								? 'Người nhận có thể xem và tải các tệp trong thư mục này. Người gửi có thể thu hồi bất kỳ lúc nào.'
+								: 'Liên kết chỉ để tải xuống — không xem trước, không chỉnh sửa. Người gửi có thể thu hồi bất kỳ lúc nào.'}
 						</p>
 					</section>
 				)}

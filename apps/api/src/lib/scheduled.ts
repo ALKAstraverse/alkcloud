@@ -184,6 +184,20 @@ async function runScheduledTasksInner(deps: ScheduledDeps, startedAt: number): P
 			});
 		}
 		const folderCutoff = new Date(new Date(now).getTime() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+		// Thu hồi share của thư mục sắp bị purge ⇒ link chia sẻ thư mục không sống sót.
+		const foldersToPurge = await db.listFolderIdsEligibleForPurge(folderCutoff);
+		if (foldersToPurge.length > 0) {
+			const revokedFolderShares = await db.revokeActiveSharesForFolders(foldersToPurge, now);
+			for (const shareId of revokedFolderShares) {
+				await recordAudit({ db, storage: deps.storage, config, now: () => new Date(scheduledTime) }, {
+					action: 'share.revoke',
+					actor: 'cron',
+					targetType: 'share',
+					targetId: shareId,
+					metadata: { reason: 'folder_purge_retention' },
+				});
+			}
+		}
 		await db.purgeDeletedFolders(folderCutoff);
 	}
 

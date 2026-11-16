@@ -585,11 +585,14 @@ export function DeleteConfirmDialog({
 export function PurgeConfirmDialog({
 	open,
 	name,
+	names,
 	onClose,
 	onConfirm,
 }: {
 	open: boolean;
 	name: string;
+	/** Danh sách nhiều mục (xoá hàng loạt) — thay cho `name` đơn lẻ. */
+	names?: string[];
 	onClose: () => void;
 	onConfirm: () => Promise<void>;
 }) {
@@ -598,11 +601,14 @@ export function PurgeConfirmDialog({
 	useEffect(() => {
 		if (open) setBusy(false);
 	}, [open]);
+	const description = names && names.length > 0
+		? `${names.length} mục sẽ bị xoá ngay lập tức và không thể khôi phục. Các link chia sẻ liên quan cũng sẽ bị thu hồi. Thao tác này không thể hoàn tác.`
+		: `“${name}” sẽ bị xoá ngay lập tức và không thể khôi phục. Các link chia sẻ của tệp này cũng sẽ bị thu hồi. Thao tác này không thể hoàn tác.`;
 	return (
 		<ConfirmDialog
 			open={open}
 			title="Xoá vĩnh viễn?"
-			description={`“${name}” sẽ bị xoá ngay lập tức và không thể khôi phục. Các link chia sẻ của tệp này cũng sẽ bị thu hồi. Thao tác này không thể hoàn tác.`}
+			description={description}
 			icon="broom"
 			confirmLabel="Xoá vĩnh viễn"
 			destructive

@@ -77,10 +77,11 @@ type DialogState =
 	| { kind: 'new-folder' }
 	| { kind: 'rename'; target: Target }
 	| { kind: 'move'; target: Target }
-	| { kind: 'share'; fileId: string; name: string }
+	| { kind: 'share'; targetType: 'file' | 'folder'; targetId: string; name: string }
 	| { kind: 'delete'; targets: Target[] }
 	| { kind: 'purge'; target: Target }
-	| { kind: 'empty-trash' };
+	| { kind: 'empty-trash' }
+	| { kind: 'purge-many'; names: string[] };
 
 type SortKey = 'name' | 'modified' | 'size';
 type SortDir = 'asc' | 'desc';
@@ -189,6 +190,11 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 	const [sort, setSort] = useState<SortKey>(() => readStored(SORT_KEY, ['name', 'modified', 'size'], 'name'));
 	const [sortDir, setSortDir] = useState<SortDir>(() => readStored(SORT_DIR_KEY, ['asc', 'desc'], 'asc'));
 	const [selected, setSelected] = useState<Set<string>>(new Set());
+	// Chế độ chọn: bật ⇒ hiện tickbox trên từng mục (tệp + thùng rác).
+	const [selectionMode, setSelectionMode] = useState(false);
+	// Chọn trong thùng rác (tách khỏi chọn ở view Tệp).
+	const [trashSelectionMode, setTrashSelectionMode] = useState(false);
+	const [trashSelected, setTrashSelected] = useState<Set<string>>(new Set());
 
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -401,6 +407,13 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 		}
 	};
 
+	const toggleSelectionMode = () => {
+		setSelectionMode((current) => {
+			if (current) setSelected(new Set());
+			return !current;
+		});
+	};
+
 	const toggleSelect = (type: 'file' | 'folder', id: string) => {
 		const key = `${type}:${id}`;
 		setSelected((current) => {
@@ -434,6 +447,13 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 				onSelect: () => enterFolder(folder),
 			},
 			{
+				id: 'share',
+				label: 'Chia sẻ',
+				icon: 'shareNodes',
+				onSelect: () =>
+					setDialog({ kind: 'share', targetType: 'folder', targetId: folder.id, name: folder.name }),
+			},
+			{
 				id: 'rename',
 				label: 'Đổi tên',
 				icon: 'pen',
@@ -464,7 +484,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 				id: 'share',
 				label: 'Chia sẻ',
 				icon: 'shareNodes',
-				onSelect: () => setDialog({ kind: 'share', fileId: file.id, name: file.name }),
+				onSelect: () => setDialog({ kind: 'share', targetType: 'file', targetId: file.id, name: file.name }),
 			},
 			{
 				id: 'rename',
@@ -582,10 +602,13 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 		}
 	};
 
-	const handleShare = async (fileId: string, input: { password: string | null; expiresInDays: number }): Promise<ShareResult> => {
+	const handleShare = async (
+		target: { type: 'file' | 'folder'; id: string },
+		input: { password: string | null; expiresInDays: number },
+	): Promise<ShareResult> => {
 		const passwordVerifier = input.password ? await deriveShareVerifier(input.password) : null;
 		const result = await createShare({
-			fileId,
+			...(target.type === 'file' ? { fileId: target.id } : { folderId: target.id }),
 			expiresInDays: input.expiresInDays,
 			maxDownloads: null,
 			passwordVerifier,
@@ -677,6 +700,91 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 		} finally {
 			setBusy(false);
 		}
+	};
+
+	// ------------------------------------------------------- thùng rác: chọn
+	const handlePurgeMany = async (names: string[]) => {
+		const targets = trashSelectedTargets;
+		await runMutation(
+			async () => {
+				// Tệp trước, thư mục sau (thư mục chứa tệp sẽ bị chặn 409 nếu còn tệp).
+				for (const target of targets) {
+					if (target.type !== 'file') continue;
+					try {
+						await purgeFile(target.id);
+					} catch {
+						// Bỏ qua mục lỗi ⇒ các mục còn lại vẫn được xoá.
+					}
+				}
+				for (const target of targets) {
+					if (target.type !== 'folder') continue;
+					try {
+						await purgeFolder(target.id);
+					} catch {
+						// Bỏ qua mục lỗi.
+					}
+				}
+			},
+			`Đã xoá vĩnh viễn ${names.length} mục`,
+			'Không xoá được',
+		);
+		setTrashSelected(new Set());
+	};
+
+	const toggleTrashSelectionMode = () => {
+		setTrashSelectionMode((current) => {
+			if (current) setTrashSelected(new Set());
+			return !current;
+		});
+	};
+
+	const toggleTrashSelect = (type: 'file' | 'folder', id: string) => {
+		const key = `${type}:${id}`;
+		setTrashSelected((current) => {
+			const next = new Set(current);
+			if (next.has(key)) next.delete(key);
+			else next.add(key);
+			return next;
+		});
+	};
+
+	const trashAllSelected = trashTotal > 0 && trashSelected.size === trashTotal;
+
+	const toggleTrashSelectAll = () => {
+		if (trashAllSelected) {
+			setTrashSelected(new Set());
+			return;
+		}
+		const next = new Set<string>();
+		for (const folder of trashFolders) next.add(`folder:${folder.id}`);
+		for (const file of trashFiles) next.add(`file:${file.id}`);
+		setTrashSelected(next);
+	};
+
+	const trashSelectedTargets = useMemo<Target[]>(() => {
+		const targets: Target[] = [];
+		for (const key of trashSelected) {
+			const [type, id] = key.split(':') as ['file' | 'folder', string];
+			const match =
+				type === 'file'
+					? trashFiles.find((item) => item.id === id)
+					: trashFolders.find((item) => item.id === id);
+			if (match) targets.push({ type, id, name: match.name });
+		}
+		return targets;
+	}, [trashSelected, trashFiles, trashFolders]);
+
+	const handleRestoreMany = async (targets: Target[]) => {
+		await runMutation(
+			async () => {
+				for (const target of targets) {
+					if (target.type === 'file') await restoreFile(target.id);
+					else await restoreFolder(target.id);
+				}
+			},
+			`Đã khôi phục ${targets.length} mục`,
+			'Không khôi phục được',
+		);
 	};
 
 	// ----------------------------------------------------------------- upload
@@ -1032,11 +1140,12 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 											{totalItems > 0 ? (
 												<Button
 													size="sm"
-													icon="check"
-													onClick={toggleSelectAll}
-													title={allSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+													icon={selectionMode ? 'xmark' : 'listCheck'}
+													onClick={toggleSelectionMode}
+													aria-pressed={selectionMode}
+													title={selectionMode ? 'Thoát chế độ chọn' : 'Chọn nhiều mục'}
 												>
-													{allSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+													{selectionMode ? 'Huỷ chọn' : 'Chọn'}
 												</Button>
 											) : null}
 											<div className="segmented" role="group" aria-label="Kiểu hiển thị">
@@ -1187,9 +1296,17 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 																key={folder.id}
 																folder={folder}
 																selected={selected.has(`folder:${folder.id}`)}
+																selectionMode={selectionMode}
 																onOpen={() => enterFolder(folder)}
 																onToggle={() => toggleSelect('folder', folder.id)}
 																menuItems={[
+																	{
+																		id: 'share',
+																		label: 'Chia sẻ',
+																		icon: 'shareNodes',
+																		onSelect: () =>
+																			setDialog({ kind: 'share', targetType: 'folder', targetId: folder.id, name: folder.name }),
+																	},
 																	{
 																		id: 'rename',
 																		label: 'Đổi tên',
@@ -1231,6 +1348,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 																key={file.id}
 																file={file}
 																selected={selected.has(`file:${file.id}`)}
+																selectionMode={selectionMode}
 																onOpen={() => void openFile(file)}
 																onToggle={() => toggleSelect('file', file.id)}
 																menuItems={[
@@ -1239,7 +1357,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 																		id: 'share',
 																		label: 'Chia sẻ',
 																		icon: 'shareNodes',
-																		onSelect: () => setDialog({ kind: 'share', fileId: file.id, name: file.name }),
+																		onSelect: () => setDialog({ kind: 'share', targetType: 'file', targetId: file.id, name: file.name }),
 																	},
 																	{
 																		id: 'rename',
@@ -1357,7 +1475,22 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														openContextMenu(event, { type: 'folder', id: folder.id, name: folder.name })
 													}
 												>
-													<span role="cell" className="drive__name" title="Bấm để chọn · bấm đúp để mở">
+													{selectionMode ? (
+														<span
+															className="drive__check"
+															data-checked={selected.has(`folder:${folder.id}`)}
+															role="checkbox"
+															aria-checked={selected.has(`folder:${folder.id}`)}
+															aria-label={`Chọn ${folder.name}`}
+															onClick={(event) => {
+																event.stopPropagation();
+																toggleSelect('folder', folder.id);
+															}}
+														>
+															{selected.has(`folder:${folder.id}`) ? <Icon name="check" /> : null}
+														</span>
+													) : null}
+														<span role="cell" className="drive__name" title="Bấm để chọn · bấm đúp để mở">
 														<span className="drive__icon tone-folder">
 															<Icon name="folder" />
 														</span>
@@ -1415,7 +1548,22 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 															openContextMenu(event, { type: 'file', id: file.id, name: file.name })
 														}
 													>
-														<span role="cell" className="drive__name" title="Bấm để chọn · bấm đúp để mở">
+														{selectionMode ? (
+															<span
+																className="drive__check"
+																data-checked={selected.has(`file:${file.id}`)}
+																role="checkbox"
+																aria-checked={selected.has(`file:${file.id}`)}
+																aria-label={`Chọn ${file.name}`}
+																onClick={(event) => {
+																	event.stopPropagation();
+																	toggleSelect('file', file.id);
+																}}
+															>
+																{selected.has(`file:${file.id}`) ? <Icon name="check" /> : null}
+															</span>
+														) : null}
+															<span role="cell" className="drive__name" title="Bấm để chọn · bấm đúp để mở">
 															<span className={`drive__icon ${kind.tone}`}>
 																<Icon name={kind.icon} />
 															</span>
@@ -1444,9 +1592,12 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 										</div>
 									)}
 
-									{selected.size > 0 ? (
+									{selectionMode ? (
 										<div className="bulk-bar" role="region" aria-label="Thao tác hàng loạt">
 											<span className="bulk-bar__count">{selected.size} mục đã chọn</span>
+											<Button size="sm" icon="check" onClick={toggleSelectAll}>
+												{allSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+											</Button>
 											<Button size="sm" icon="move" onClick={() => setDialog({ kind: 'move', target: selectedTargets[0]! })} disabled={selectedTargets.length !== 1}>
 												Di chuyển
 											</Button>
@@ -1455,10 +1606,11 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 												variant="danger-ghost"
 												icon="trashCan"
 												onClick={() => setDialog({ kind: 'delete', targets: selectedTargets })}
+												disabled={selectedTargets.length === 0}
 											>
 												Xoá
 											</Button>
-											<IconButton icon="xmark" label="Bỏ chọn" size="sm" onClick={() => setSelected(new Set())} />
+											<IconButton icon="xmark" label="Thoát chế độ chọn" size="sm" onClick={toggleSelectionMode} />
 										</div>
 									) : null}
 								</>
@@ -1469,6 +1621,17 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 											<Button icon="arrowRotateRight" onClick={() => void refresh()}>
 												Tải lại
 											</Button>
+											{trashTotal > 0 ? (
+												<Button
+													size="sm"
+													icon={trashSelectionMode ? 'xmark' : 'listCheck'}
+													onClick={toggleTrashSelectionMode}
+													aria-pressed={trashSelectionMode}
+													title={trashSelectionMode ? 'Thoát chế độ chọn' : 'Chọn nhiều mục'}
+												>
+													{trashSelectionMode ? 'Huỷ chọn' : 'Chọn'}
+												</Button>
+											) : null}
 											<Button
 												variant="danger-ghost"
 												icon="broom"
@@ -1503,6 +1666,18 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 											) : null}
 											{trashFolders.map((folder) => (
 												<div key={folder.id} className="file-list__row file-list__row--trash">
+													{trashSelectionMode ? (
+														<span
+															className="file-list__check"
+															data-checked={trashSelected.has(`folder:${folder.id}`)}
+															role="checkbox"
+															aria-checked={trashSelected.has(`folder:${folder.id}`)}
+															aria-label={`Chọn ${folder.name}`}
+															onClick={() => toggleTrashSelect('folder', folder.id)}
+														>
+															{trashSelected.has(`folder:${folder.id}`) ? <Icon name="check" /> : null}
+														</span>
+													) : null}
 													<span className="file-list__icon tone-folder">
 														<Icon name="folder" />
 													</span>
@@ -1541,6 +1716,18 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 												const kind = fileKind(file.name, file.contentType);
 												return (
 													<div key={file.id} className="file-list__row file-list__row--trash">
+														{trashSelectionMode ? (
+															<span
+																className="file-list__check"
+																data-checked={trashSelected.has(`file:${file.id}`)}
+																role="checkbox"
+																aria-checked={trashSelected.has(`file:${file.id}`)}
+																aria-label={`Chọn ${file.name}`}
+																onClick={() => toggleTrashSelect('file', file.id)}
+															>
+																{trashSelected.has(`file:${file.id}`) ? <Icon name="check" /> : null}
+															</span>
+														) : null}
 														<span className={`file-list__icon ${kind.tone}`}>
 															<Icon name={kind.icon} />
 														</span>
@@ -1572,6 +1759,32 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 											})}
 										</div>
 									)}
+									{trashSelectionMode ? (
+										<div className="bulk-bar" role="region" aria-label="Thao tác hàng loạt trong thùng rác">
+											<span className="bulk-bar__count">{trashSelected.size} mục đã chọn</span>
+											<Button size="sm" icon="check" onClick={toggleTrashSelectAll}>
+												{trashAllSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+											</Button>
+											<Button
+												size="sm"
+												icon="arrowRotateRight"
+												onClick={() => void handleRestoreMany(trashSelectedTargets).catch(() => {})}
+												disabled={busy || trashSelectedTargets.length === 0}
+											>
+												Khôi phục
+											</Button>
+											<Button
+												size="sm"
+												variant="danger-ghost"
+												icon="broom"
+												onClick={() => setDialog({ kind: 'purge-many', names: trashSelectedTargets.map((target) => target.name) })}
+												disabled={busy || trashSelectedTargets.length === 0}
+											>
+												Xoá vĩnh viễn
+											</Button>
+											<IconButton icon="xmark" label="Thoát chế độ chọn" size="sm" onClick={toggleTrashSelectionMode} />
+										</div>
+									) : null}
 								</>
 							)}
 						</div>
@@ -1649,7 +1862,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 				onClose={() => setDialog({ kind: 'none' })}
 				onSubmit={async (input) => {
 					if (dialog.kind !== 'share') throw new Error('Hộp thoại đã đóng');
-					return handleShare(dialog.fileId, input);
+					return handleShare({ type: dialog.targetType, id: dialog.targetId }, input);
 				}}
 			/>
 			<DeleteConfirmDialog
@@ -1676,6 +1889,16 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 				}}
 			/>
 			<PurgeConfirmDialog
+				open={dialog.kind === 'purge-many'}
+				name=""
+				names={dialog.kind === 'purge-many' ? dialog.names : []}
+				onClose={() => setDialog({ kind: 'none' })}
+				onConfirm={async () => {
+					if (dialog.kind !== 'purge-many') return;
+					await handlePurgeMany(dialog.names);
+				}}
+			/>
+			<PurgeConfirmDialog
 				open={dialog.kind === 'purge'}
 				name={dialog.kind === 'purge' ? dialog.target.name : ''}
 				onClose={() => setDialog({ kind: 'none' })}
@@ -1692,12 +1915,14 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 function FolderCard({
 	folder,
 	selected,
+	selectionMode,
 	onOpen,
 	onToggle,
 	menuItems,
 }: {
 	folder: FolderEntry;
 	selected: boolean;
+	selectionMode: boolean;
 	onOpen: () => void;
 	onToggle: () => void;
 	menuItems: React.ComponentProps<typeof Menu>['items'];
@@ -1715,6 +1940,11 @@ function FolderCard({
 			onClick={(event) => {
 				if (longPress.consume()) {
 					event.preventDefault();
+					return;
+				}
+				if (selectionMode) {
+					event.preventDefault();
+					onToggle();
 					return;
 				}
 				const onBody = (event.target as HTMLElement).closest('.file-card__open');
@@ -1738,6 +1968,21 @@ function FolderCard({
 			}}
 			title="Bấm để chọn · bấm đúp để mở"
 		>
+			{selectionMode ? (
+				<span
+					className="file-card__check"
+					data-checked={selected}
+					role="checkbox"
+					aria-checked={selected}
+					aria-label={`Chọn ${folder.name}`}
+					onClick={(event) => {
+						event.stopPropagation();
+						onToggle();
+					}}
+				>
+					{selected ? <Icon name="check" /> : null}
+				</span>
+			) : null}
 			<div className="file-card__actions" onClick={(event) => event.stopPropagation()}>
 				<Menu
 					label={`Thao tác cho ${folder.name}`}
@@ -1765,12 +2010,14 @@ function FolderCard({
 function FileCard({
 	file,
 	selected,
+	selectionMode,
 	onOpen,
 	onToggle,
 	menuItems,
 }: {
 	file: FileEntry;
 	selected: boolean;
+	selectionMode: boolean;
 	onOpen: () => void;
 	onToggle: () => void;
 	menuItems: React.ComponentProps<typeof Menu>['items'];
@@ -1789,6 +2036,11 @@ function FileCard({
 			onClick={(event) => {
 				if (longPress.consume()) {
 					event.preventDefault();
+					return;
+				}
+				if (selectionMode) {
+					event.preventDefault();
+					onToggle();
 					return;
 				}
 				const onBody = (event.target as HTMLElement).closest('.file-card__open');
@@ -1812,6 +2064,21 @@ function FileCard({
 			}}
 			title="Bấm để chọn · bấm đúp để mở"
 		>
+			{selectionMode ? (
+				<span
+					className="file-card__check"
+					data-checked={selected}
+					role="checkbox"
+					aria-checked={selected}
+					aria-label={`Chọn ${file.name}`}
+					onClick={(event) => {
+						event.stopPropagation();
+						onToggle();
+					}}
+				>
+					{selected ? <Icon name="check" /> : null}
+				</span>
+			) : null}
 			<div className="file-card__actions" onClick={(event) => event.stopPropagation()}>
 				<Menu
 					label={`Thao tác cho ${file.name}`}
