@@ -5,6 +5,32 @@
 
 ---
 
+## [Unreleased] — 15/11/2026 — Sửa UI thùng rác (dùng được trên mobile)
+
+> Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-web` version `0f0f2d0a-9875-4b92-bf4c-43e9176e1781` (entry `/app/CV9cg0Hm/`).
+> Kiểm thử: `typecheck` PASS · `npm test` **PASS=432 · FAIL=0** · `build` PASS · E2E production **PASS=22 · FAIL=0**.
+
+### Fixed
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| **Không xoá được thư mục trên mobile** | Nguyên nhân: rule mobile `.file-list__row > :nth-child(3) { display:none }` áp cho **mọi** dòng, mà dòng thùng rác chỉ có 3 phần tử ⇒ nút "Khôi phục / Xoá vĩnh viễn" bị ẩn (laptop dùng layout khác nên vẫn bấm được). Nay rule nth-child chỉ áp cho dòng tệp thường, dòng thùng rác có **bố cục riêng** trên mobile: icon + tên ở dòng 1, nút thao tác ở dòng 2 (luôn hiện, bấm được bằng tay) |
+| **Thư mục trong thùng rác không hiện hạn xoá** | Dòng thư mục giờ hiện "còn N ngày" (tính từ `deletedAt` + retention) như dòng tệp — `retentionDeadline()` trong `apps/web/src/lib/format.ts` |
+
+### Changed
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| **Nút thao tác dòng thùng rác** | Chuyển sang nút icon (`IconButton`) có `aria-label`/`title` — luôn hiện trên mọi kích thước màn hình, không phụ thuộc hover (hover không tồn tại trên touch) |
+| **Nút "Dọn thùng rác"** | Thêm trên toolbar thùng rác: xoá vĩnh viễn **toàn bộ** tệp rồi thư mục (con trước cha để không bị 409), có hộp thoại xác nhận, báo cáo số mục đã xoá / số mục lỗi |
+| **Header thùng rác** | Hiện đúng số ngày retention thay vì hard-code 30 |
+
+### Test
+
+- `apps/web/test/path.test.ts`: `retentionDeadline()` (mốc hết hạn giữ cho thư mục, xử lý input sai).
+
+---
+
 ## [Unreleased] — 15/11/2026 — Đường dẫn rút gọn + bộ chọn thư mục kiểu Windows
 
 > Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `4384bb69-c177-4587-95cb-789c5550f05c`

@@ -28,6 +28,7 @@ import {
 import { deriveShareVerifier, randomSalt } from '../lib/kdf.js';
 import { uploadFiles, uniqueFileName } from '../lib/upload.js';
 import { Button, IconButton } from '../components/Button.js';
+import { ConfirmDialog } from '../components/Dialog.js';
 import { ContextMenu } from '../components/ContextMenu.js';
 import { Icon } from '../components/Icon.js';
 import { Menu, type MenuItem } from '../components/Menu.js';
@@ -45,7 +46,7 @@ import {
 } from '../components/FileDialogs.js';
 import { SettingsPage } from './SettingsPage.js';
 import { fileKind } from '../lib/file-type.js';
-import { formatBytes, formatRelative, formatRemaining, quotaModeLabel } from '../lib/format.js';
+import { formatBytes, formatRelative, formatRemaining, quotaModeLabel, retentionDeadline } from '../lib/format.js';
 import { useTheme } from '../lib/theme.js';
 
 export type WorkspaceView = 'files' | 'trash' | 'settings';
@@ -78,7 +79,8 @@ type DialogState =
 	| { kind: 'move'; target: Target }
 	| { kind: 'share'; fileId: string; name: string }
 	| { kind: 'delete'; targets: Target[] }
-	| { kind: 'purge'; target: Target };
+	| { kind: 'purge'; target: Target }
+	| { kind: 'empty-trash' };
 
 type SortKey = 'name' | 'modified' | 'size';
 type SortDir = 'asc' | 'desc';
@@ -175,6 +177,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 	const [folders, setFolders] = useState<FolderEntry[]>([]);
 	const [trashFiles, setTrashFiles] = useState<FileEntry[]>([]);
 	const [trashFolders, setTrashFolders] = useState<FolderEntry[]>([]);
+	const [trashRetentionDays, setTrashRetentionDays] = useState(30);
 	const [mode, setMode] = useState('NORMAL');
 	const [usage, setUsage] = useState<{ quotaBytes: number; usedBytes: number; reservedBytes: number } | null>(null);
 
@@ -223,6 +226,7 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 					const [trashResult, trashFolderResult] = await Promise.all([listTrash(), listTrashFolders()]);
 					setTrashFiles(trashResult.files);
 					setTrashFolders(trashFolderResult.folders);
+					setTrashRetentionDays(trashFolderResult.retentionDays ?? trashResult.retentionDays ?? 30);
 				} else {
 					const [fileResult, folderResult] = await Promise.all([
 						listFilesAll({ parentId: folderId, q: query || undefined }),
@@ -611,6 +615,68 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 			'Đã xoá vĩnh viễn',
 			'Không xoá được',
 		);
+	};
+
+	/** Dọn toàn bộ thùng rác: xoá tệp trước, rồi thư mục (con trước cha). */
+	const handleEmptyTrash = async () => {
+		setBusy(true);
+		try {
+			let purged = 0;
+			const failures: string[] = [];
+
+			for (const file of trashFiles) {
+				try {
+					await purgeFile(file.id);
+					purged += 1;
+				} catch {
+					failures.push(file.name);
+				}
+			}
+
+			// Thư mục: xoá từ sâu lên nông (con trước cha) để không bị chặn 409.
+			const childrenOf = new Map<string | null, FolderEntry[]>();
+			for (const folder of trashFolders) {
+				const list = childrenOf.get(folder.parentId) ?? [];
+				list.push(folder);
+				childrenOf.set(folder.parentId, list);
+			}
+			const ordered: FolderEntry[] = [];
+			const visit = (parentId: string | null) => {
+				for (const folder of childrenOf.get(parentId) ?? []) {
+					visit(folder.id);
+					ordered.push(folder);
+				}
+			};
+			visit(null);
+			for (const folder of trashFolders) {
+				if (!ordered.includes(folder)) ordered.push(folder);
+			}
+
+			for (const folder of ordered) {
+				try {
+					await purgeFolder(folder.id);
+					purged += 1;
+				} catch {
+					failures.push(folder.name);
+				}
+			}
+
+			await refresh({ silent: true });
+			if (failures.length === 0) {
+				toast.push({ tone: 'success', title: `Đã dọn thùng rác (${purged} mục)` });
+			} else {
+				toast.push({
+					tone: 'warning',
+					title: `Đã dọn ${purged} mục, còn ${failures.length} mục chưa xoá được`,
+					message: failures.slice(0, 3).join(', '),
+				});
+			}
+		} catch (caught) {
+			const message = errorMessage(caught, 'Không dọn được thùng rác');
+			toast.push({ tone: 'error', title: 'Không dọn được thùng rác', message });
+		} finally {
+			setBusy(false);
+		}
 	};
 
 	// ----------------------------------------------------------------- upload
@@ -1403,9 +1469,17 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 											<Button icon="arrowRotateRight" onClick={() => void refresh()}>
 												Tải lại
 											</Button>
+											<Button
+												variant="danger-ghost"
+												icon="broom"
+												onClick={() => setDialog({ kind: 'empty-trash' })}
+												disabled={busy || trashTotal === 0}
+											>
+												Dọn thùng rác
+											</Button>
 										</div>
 										<div className="toolbar__spacer" />
-										<span className="small muted">Tự xoá vĩnh viễn sau 30 ngày</span>
+										<span className="small muted">Tự xoá vĩnh viễn sau {trashRetentionDays} ngày</span>
 									</div>
 
 									{loading ? (
@@ -1435,26 +1509,25 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 													<span className="file-list__text">
 														<span className="file-list__title truncate">{folder.name}</span>
 														<span className="file-list__meta">
-															Đã xoá {formatRelative(folder.deletedAt)} · ẩn cùng toàn bộ nội dung
+															Thư mục · xoá {formatRelative(folder.deletedAt)} · {formatRemaining(retentionDeadline(folder.deletedAt, trashRetentionDays))}
 														</span>
 													</span>
-													<div className="file-list__actions" style={{ opacity: 1 }}>
-														<Button
+													<div className="file-list__actions">
+														<IconButton
 															size="sm"
 															icon="arrowRotateRight"
+															label={`Khôi phục thư mục ${folder.name}`}
 															onClick={() => void handleRestore({ type: 'folder', id: folder.id, name: folder.name }).catch(() => {})}
 															disabled={busy}
-														>
-															Khôi phục
-														</Button>
-														<Button
+														/>
+														<IconButton
 															size="sm"
 															variant="danger-ghost"
 															icon="broom"
+															label={`Xoá vĩnh viễn thư mục ${folder.name}`}
 															onClick={() => setDialog({ kind: 'purge', target: { type: 'folder', id: folder.id, name: folder.name } })}
-														>
-															Xoá vĩnh viễn
-														</Button>
+															disabled={busy}
+														/>
 													</div>
 												</div>
 											))}
@@ -1474,29 +1547,25 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 														<span className="file-list__text">
 															<span className="file-list__title truncate">{file.name}</span>
 															<span className="file-list__meta">
-																{formatBytes(file.size)} · xoá {formatRelative(file.deletedAt)}
+																{formatBytes(file.size)} · xoá {formatRelative(file.deletedAt)} · {formatRemaining(file.purgeAfter)}
 															</span>
 														</span>
-														<span className="file-list__meta">
-															{formatRemaining(file.purgeAfter)}
-														</span>
-														<div className="file-list__actions" style={{ opacity: 1 }}>
-															<Button
+														<div className="file-list__actions">
+															<IconButton
 																size="sm"
 																icon="arrowRotateRight"
+																label={`Khôi phục tệp ${file.name}`}
 																onClick={() => void handleRestore({ type: 'file', id: file.id, name: file.name }).catch(() => {})}
 																disabled={busy}
-															>
-																Khôi phục
-															</Button>
-															<Button
+															/>
+															<IconButton
 																size="sm"
 																variant="danger-ghost"
 																icon="broom"
+																label={`Xoá vĩnh viễn tệp ${file.name}`}
 																onClick={() => setDialog({ kind: 'purge', target: { type: 'file', id: file.id, name: file.name } })}
-															>
-																Xoá vĩnh viễn
-															</Button>
+																disabled={busy}
+															/>
 														</div>
 													</div>
 												);
@@ -1590,6 +1659,20 @@ export function FilesPage({ onLogout, view, onNavigate, ownerEmail }: FilesPageP
 				onConfirm={async () => {
 					if (dialog.kind !== 'delete') return;
 					await handleDelete(dialog.targets);
+				}}
+			/>
+			<ConfirmDialog
+				open={dialog.kind === 'empty-trash'}
+				title="Dọn thùng rác"
+				description={`Xoá vĩnh viễn ${trashFiles.length} tệp và ${trashFolders.length} thư mục trong thùng rác. Không thể hoàn tác.`}
+				icon="broom"
+				confirmLabel="Dọn thùng rác"
+				destructive
+				loading={busy}
+				onCancel={() => setDialog({ kind: 'none' })}
+				onConfirm={async () => {
+					await handleEmptyTrash();
+					setDialog({ kind: 'none' });
 				}}
 			/>
 			<PurgeConfirmDialog

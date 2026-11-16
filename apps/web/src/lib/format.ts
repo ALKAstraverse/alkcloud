@@ -63,12 +63,25 @@ export function daysUntil(iso: string | null | undefined, now = Date.now()): num
 	return Math.ceil((time - now) / (24 * 60 * 60 * 1000));
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export function formatRemaining(iso: string | null | undefined, now = Date.now()): string {
 	const days = daysUntil(iso, now);
 	if (days === null) return '—';
 	if (days <= 0) return 'đến hạn xoá';
 	if (days === 1) return 'còn 1 ngày';
 	return `còn ${days} ngày`;
+}
+
+/** Mốc hết hạn giữ = thời điểm xoá + số ngày retention (thư mục không có cột purge_after). */
+export function retentionDeadline(
+	deletedAt: string | null | undefined,
+	retentionDays: number,
+): string | null {
+	if (!deletedAt) return null;
+	const time = Date.parse(deletedAt);
+	if (Number.isNaN(time)) return null;
+	return new Date(time + retentionDays * DAY_MS).toISOString();
 }
 
 const QUOTA_MODE_LABEL: Record<string, string> = {

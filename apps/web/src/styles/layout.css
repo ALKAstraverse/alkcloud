@@ -1684,24 +1684,26 @@
 		padding: var(--space-4);
 	}
 
-	.file-list__row > :nth-child(1) {
+	/* Chỉ dòng tệp thường có 5 cột (check/name/meta/meta/actions).
+	   Dòng thùng rác có 3 cột ⇒ dùng bố cục riêng bên dưới. */
+	.file-list__row:not(.file-list__row--trash) > :nth-child(1) {
 		grid-area: check;
 	}
 
-	.file-list__row > :nth-child(2) {
+	.file-list__row:not(.file-list__row--trash) > :nth-child(2) {
 		grid-area: name;
 	}
 
-	.file-list__row > :nth-child(3) {
+	.file-list__row:not(.file-list__row--trash) > :nth-child(3) {
 		grid-area: meta;
 		display: none;
 	}
 
-	.file-list__row > :nth-child(4) {
+	.file-list__row:not(.file-list__row--trash) > :nth-child(4) {
 		grid-area: meta;
 	}
 
-	.file-list__row > :nth-child(5) {
+	.file-list__row:not(.file-list__row--trash) > :nth-child(5) {
 		grid-area: actions;
 	}
 
@@ -1711,6 +1713,39 @@
 
 	.file-list__actions {
 		opacity: 1;
+	}
+
+	/* Thùng rác trên mobile: icon + tên ở dòng 1, nút thao tác ở dòng 2 —
+	   luôn hiện, bấm được bằng tay (trước: bị `display:none` ⇒ không xoá được
+	   thư mục trên điện thoại). */
+	.file-list__row--trash {
+		display: grid;
+		grid-template-columns: 32px minmax(0, 1fr);
+		grid-template-areas:
+			'icon text'
+			'actions actions';
+		row-gap: var(--space-3);
+		column-gap: var(--space-3);
+		padding: var(--space-4);
+	}
+
+	.file-list__row--trash .file-list__icon {
+		grid-area: icon;
+		align-self: start;
+	}
+
+	.file-list__row--trash .file-list__text {
+		grid-area: text;
+	}
+
+	.file-list__row--trash .file-list__actions {
+		grid-area: actions;
+		justify-content: flex-end;
+		width: 100%;
+	}
+
+	.file-list__row--trash .file-list__actions .btn {
+		flex: none;
 	}
 
 	.bulk-bar {
