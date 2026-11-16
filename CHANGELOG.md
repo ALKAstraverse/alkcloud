@@ -9,7 +9,7 @@
 
 > Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `4384bb69-c177-4587-95cb-789c5550f05c`
 > · Worker `alkcloud-web` version `1ad9528a-7dc7-4bcc-9472-17c072f2af10` (entry `/app/B3oUr1AH/`).
-> Kiểm thử: `typecheck` PASS · `npm test` **PASS=426 · FAIL=0** · `build` PASS · E2E production **PASS=22 · FAIL=0**.
+> Kiểm thử: `typecheck` PASS · `npm test` **PASS=431 · FAIL=0** · `build` PASS · E2E production **PASS=22 · FAIL=0**.
 
 ### Added
 
@@ -25,10 +25,12 @@
 | :--- | :--- |
 | **An toàn khi di chuyển** | Tự động loại trừ thư mục đang di chuyển **và toàn bộ nhánh con cháu** khỏi cây chọn đích ⇒ không tạo vòng lặp thư mục (trước: `<select>` chỉ có cha + con trực tiếp) |
 | **Tải cây thư mục** | `FilesPage` nạp `/folders/tree` **lazy** — chỉ gọi khi mở hộp thoại "Di chuyển" |
+| **Sắp xếp cây** | Cây thư mục sắp theo **cây (cha → con)** thay vì theo `depth` ⇒ thư mục con luôn nằm ngay dưới thư mục mẹ (trước: con bị gom về cuối danh sách). Logic ở `apps/web/src/lib/folder-tree.ts` (`orderFolderTree`, `collectSubtreeIds`, `filterCollapsed`) |
 
 ### Test
 
 - `apps/web/test/path.test.ts`: `buildPath` / `shortenPath` (rút gọn đầu, cắt giữa tên quá dài) / `pathOfNode`.
+- `apps/web/test/folder-tree.test.ts`: thứ tự cây (con nằm dưới mẹ), sort cùng cấp, node mồ côi không bị mất, gom nhánh con cháu khi chặn move, ẩn nhánh khi thu gọn.
 - `apps/api/test/product-journey.test.ts`: `GET /folders/tree` trả đủ node, `parentId` + `depth` đúng.
 
 ---

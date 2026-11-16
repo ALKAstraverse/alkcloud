@@ -4,6 +4,7 @@ import { Button } from './Button.js';
 import { Icon } from './Icon.js';
 import type { FolderEntry } from '../lib/api.js';
 import { formatDateTime } from '../lib/format.js';
+import { collectSubtreeIds, filterCollapsed, orderFolderTree } from '../lib/folder-tree.js';
 import { shortenPath } from '../lib/path.js';
 
 /* --------------------------------------------------------------- new folder */
@@ -212,45 +213,15 @@ export function MoveDialog({
 
 	const byId = useMemo(() => new Map(tree.map((node) => [node.id, node])), [tree]);
 
-	// Nhánh không được chọn: thư mục đang di chuyển + toàn bộ con cháu của nó.
-	const excluded = useMemo(() => {
-		const blocked = new Set<string>();
-		if (!excludeFolderId) return blocked;
-		blocked.add(excludeFolderId);
-		let changed = true;
-		while (changed) {
-			changed = false;
-			for (const node of tree) {
-				if (node.parentId && blocked.has(node.parentId) && !blocked.has(node.id)) {
-					blocked.add(node.id);
-					changed = true;
-				}
-			}
-		}
-		return blocked;
-	}, [tree, excludeFolderId]);
+	// Sắp xếp theo cây (cha → con, cùng cấp sort theo tên) để thư mục con
+	// nằm ngay dưới thư mục mẹ, không bị đẩy xuống cuối danh sách.
+	const ordered = useMemo(() => orderFolderTree(tree), [tree]);
 
 	// Node nào đang hiện: ẩn con của các node đã thu gọn.
-	const visible = useMemo(() => {
-		const hidden = new Set<string>();
-		for (const node of tree) {
-			if (!collapsed.has(node.id)) continue;
-			for (const child of tree) {
-				if (child.parentId === node.id) hidden.add(child.id);
-			}
-		}
-		let changed = true;
-		while (changed) {
-			changed = false;
-			for (const node of tree) {
-				if (node.parentId && hidden.has(node.parentId) && !hidden.has(node.id)) {
-					hidden.add(node.id);
-					changed = true;
-				}
-			}
-		}
-		return tree.filter((node) => !hidden.has(node.id));
-	}, [tree, collapsed]);
+	const visible = useMemo(() => filterCollapsed(ordered, collapsed), [ordered, collapsed]);
+
+	// Nhánh không được chọn: thư mục đang di chuyển + toàn bộ con cháu của nó.
+	const excluded = useMemo(() => collectSubtreeIds(tree, excludeFolderId ?? null), [tree, excludeFolderId]);
 
 	const hasChildren = useMemo(() => {
 		const ids = new Set(tree.map((node) => node.parentId));
