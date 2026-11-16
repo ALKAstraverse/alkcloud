@@ -136,8 +136,19 @@ async function runScheduledTasksInner(deps: ScheduledDeps, startedAt: number): P
 		const graceCutoff = new Date(new Date(now).getTime() - PURGE_GRACE_PERIOD_MS).toISOString();
 		const ready = await db.listFilesReadyForPurge(graceCutoff, 20);
 		for (const file of ready) {
-			const activeShares = await db.countActiveShares(file.id, now);
-			if (activeShares > 0) continue;
+			// Share của file bị purge ⇒ thu hồi luôn (link cũ chết theo file).
+			// Trước đây file có share hoạt động bị `continue` ⇒ không bao giờ
+			// được dọn ⇒ rò quota/object mãi.
+			const revokedShares = await db.revokeActiveSharesForFiles([file.id], now);
+			for (const shareId of revokedShares) {
+				await recordAudit({ db, storage: deps.storage, config, now: () => new Date(scheduledTime) }, {
+					action: 'share.revoke',
+					actor: 'cron',
+					targetType: 'share',
+					targetId: shareId,
+					metadata: { reason: 'file_purge_retention' },
+				});
+			}
 			if (file.purgeState !== 'PURGING') {
 				const started = await db.markFilePurgeStarted(file.id, now);
 				if (!started) continue;
@@ -165,7 +176,11 @@ async function runScheduledTasksInner(deps: ScheduledDeps, startedAt: number): P
 				actor: 'cron',
 				targetType: 'file',
 				targetId: file.id,
-				metadata: { objectKey: file.objectKey, reason: 'retention_expired' },
+				metadata: {
+					objectKey: file.objectKey,
+					reason: 'retention_expired',
+					revokedShares: revokedShares.length,
+				},
 			});
 		}
 		const folderCutoff = new Date(new Date(now).getTime() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();

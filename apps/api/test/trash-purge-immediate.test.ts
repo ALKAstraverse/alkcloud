@@ -71,6 +71,45 @@ describe('Thùng rác — xoá vĩnh viễn ngay', () => {
 		assert.ok(audit.events.some((event) => event.action === 'file.purge'), 'phải ghi audit file.purge');
 	});
 
+	it('file: purge vĩnh viễn ⇒ share đi kèm bị thu hồi (link cũ chết)', async () => {
+		const harness = await createHarness();
+		const fileId = await uploadFile(harness, 'co-share.txt', 'hello');
+		const created = await harness.request('/shares', {
+			method: 'POST',
+			body: { fileId, expiresInDays: 7 },
+		});
+		assert.equal(created.status, 201);
+		const share = (await created.json()) as { token: string; share: { id: string } };
+
+		// Share còn sống trước khi purge.
+		const before = await harness.request('/public/share/info', {
+			headers: { 'x-share-token': share.token },
+		});
+		assert.equal(before.status, 200);
+
+		await harness.request(`/files/${fileId}`, { method: 'DELETE' });
+		const purge = await harness.request(`/files/${fileId}/purge`, { method: 'DELETE' });
+		assert.equal(purge.status, 200, `purge phải 200 (không chặn vì còn share), nhận ${purge.status}`);
+
+		// Link share phải chết theo file.
+		const after = await harness.request('/public/share/info', {
+			headers: { 'x-share-token': share.token },
+		});
+		assert.equal(after.status, 404, 'share phải bị thu hồi khi file bị xoá vĩnh viễn');
+		const download = await harness.request('/public/share/download', {
+			headers: { 'x-share-token': share.token },
+		});
+		assert.equal(download.status, 404, 'không tải được file đã bị xoá vĩnh viễn');
+
+		const audit = (await (await harness.request('/system/audit?limit=50')).json()) as {
+			events: Array<{ action: string; targetId: string }>;
+		};
+		assert.ok(
+			audit.events.some((event) => event.action === 'share.revoke' && event.targetId === share.share.id),
+			'phải ghi audit share.revoke cho share bị thu hồi',
+		);
+	});
+
 	it('folder: chặn khi còn file trong cây, cho phép sau khi purge hết file', async () => {
 		const harness = await createHarness();
 		const rootId = await createFolder(harness, 'A');

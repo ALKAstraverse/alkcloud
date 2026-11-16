@@ -161,7 +161,7 @@ describe('AUD-01/AUD-02 — purge 2 pha (PENDING → PURGING)', () => {
 		assert.equal(await storage.headObject(file.objectKey), null, 'lần cron sau phải xoá được object');
 	});
 
-	it('file có share đang hoạt động ⇒ KHÔNG được đánh dấu purge', async () => {
+	it('file có share đang hoạt động ⇒ cron thu hồi share rồi purge file', async () => {
 		const db = await makeDb();
 		const storage = new MockObjectStorage();
 		const now = '2026-01-01T00:00:00.000Z';
@@ -177,13 +177,16 @@ describe('AUD-01/AUD-02 — purge 2 pha (PENDING → PURGING)', () => {
 			maxDownloads: null,
 			now,
 		});
-
+		// Purge 2 pha: lần 1 đánh dấu PENDING, lần 2 (sau grace 24h) xoá thật.
+		await runCron(db, storage, Date.parse(now));
 		await runCron(db, storage, Date.parse(now) + 25 * HOUR);
 
-		const row = await db.getFile(file.id);
-		assert.ok(row, 'file có share phải còn');
-		assert.notEqual(row.purgeState, 'PURGING', 'KHÔNG được xoá file còn share hoạt động');
-		assert.ok(await storage.headObject(file.objectKey), 'object phải còn');
+		// Share bị thu hồi (đánh dấu revoked_at) rồi bị xoá theo cascade khi
+		// row file bị xoá ⇒ link cũ không dùng được nữa.
+		const share = await db.getShareById('shr_1');
+		assert.ok(!share || share.revokedAt, 'share phải được thu hồi khi file bị purge');
+		assert.equal(await db.getFile(file.id), null, 'file phải được purge');
+		assert.equal(await storage.headObject(file.objectKey), null, 'object phải bị xoá');
 	});
 });
 

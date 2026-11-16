@@ -525,7 +525,7 @@ export function PurgeConfirmDialog({
 		<ConfirmDialog
 			open={open}
 			title="Xoá vĩnh viễn?"
-			description={`“${name}” sẽ bị xoá ngay lập tức và không thể khôi phục. Thao tác này không thể hoàn tác.`}
+			description={`“${name}” sẽ bị xoá ngay lập tức và không thể khôi phục. Các link chia sẻ của tệp này cũng sẽ bị thu hồi. Thao tác này không thể hoàn tác.`}
 			icon="broom"
 			confirmLabel="Xoá vĩnh viễn"
 			destructive

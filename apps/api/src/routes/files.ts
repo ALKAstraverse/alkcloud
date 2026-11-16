@@ -270,9 +270,22 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 		if (!file || !file.deletedAt) throw AppError.notFound('File không trong trash');
 		// Owner được xoá vĩnh viễn NGAY, không cần chờ hết retention 30 ngày.
 		// `purge_after` chỉ là mốc để cron tự dọn — không phải điều kiện chặn.
-		const activeShares = await context.db.countActiveShares(file.id, context.now().toISOString());
-		if (activeShares > 0) {
-			throw AppError.conflict('Còn share đang hoạt động — thu hồi share trước khi xóa vĩnh viễn');
+		//
+		// Share của file bị xoá vĩnh viễn ⇒ **tự thu hồi** (không chặn thao tác):
+		// link cũ phải chết theo file thay vì để lại link "sống" mở ra 404.
+		const revokedShares = await context.db.revokeActiveSharesForFiles(
+			[file.id],
+			context.now().toISOString(),
+		);
+		for (const shareId of revokedShares) {
+			await recordAudit(context, {
+				action: 'share.revoke',
+				actor: auth?.email ?? 'unknown',
+				targetType: 'share',
+				targetId: shareId,
+				ip: c.get('clientIp'),
+				metadata: { reason: 'file_purge' },
+			});
 		}
 		// SEC-09: tra cứu TRỰC TIẾP theo object_key thay vì quét 200 session cũ nhất
 		// (nếu > 200 session OPEN, session liên quan nằm ngoài cửa sổ bị bỏ sót).
@@ -314,7 +327,7 @@ export function createFilesRoutes(context: AppContext): Hono<AppEnv> {
 			targetType: 'file',
 			targetId: file.id,
 			ip: c.get('clientIp'),
-			metadata: { versionsPurged: true },
+			metadata: { versionsPurged: true, revokedShares: revokedShares.length },
 		});
 		return json({ ok: true });
 	});

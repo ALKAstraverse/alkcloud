@@ -5,6 +5,29 @@
 
 ---
 
+## [Unreleased] — 15/11/2026 — Xoá vĩnh viễn ⇒ tự thu hồi share
+
+> Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `b4daf28d-ab80-4f09-8031-f7a30ce208d4`
+> · Worker `alkcloud-web` version `0bfb352a-2057-48ba-a0bf-4c0352965833` (entry `/app/Bk2EweWQ/`).
+> Kiểm thử: `typecheck` PASS · `npm test` **PASS=421 · FAIL=0** · `build` PASS · E2E production **PASS=22 · FAIL=0**.
+
+### Changed
+
+| Hạng mục | Nội dung |
+| :--- | :--- |
+| **`DELETE /files/:id/purge`** | Không còn chặn `409` vì "còn share đang hoạt động" — **tự thu hồi mọi share** của file rồi mới purge. Link chia sẻ cũ chết ngay (share bị đánh dấu `revoked_at` + bị xoá theo cascade khi row file bị xoá) ⇒ không để lại link "sống" mở ra 404 |
+| **Cron purge (retention 30 ngày)** | Trước: file có share hoạt động bị `continue` ⇒ **không bao giờ được dọn** (rò quota/object vĩnh viễn). Nay cron thu hồi share rồi purge file như bình thường |
+| **Audit** | Mỗi share bị thu hồi ghi 1 sự kiện `share.revoke` (actor = owner hoặc `cron`, metadata `reason: file_purge` / `file_purge_retention`); sự kiện `file.purge` kèm `revokedShares` |
+| **DB** | Thêm `revokeActiveSharesForFiles(fileIds, now)` (chia lô 100 id) và `listFileIdsInFolderSubtree(id)` |
+| **Web** | Hộp thoại "Xoá vĩnh viễn?" nói rõ: *"Các link chia sẻ của tệp này cũng sẽ bị thu hồi"* |
+
+### Test
+
+- `apps/api/test/trash-purge-immediate.test.ts`: purge file có share ⇒ `200`, share `info`/`download` ⇒ `404`, có audit `share.revoke`.
+- `apps/api/test/purge-lifecycle.test.ts`: cron thu hồi share rồi xoá object + row (thay cho case "file có share thì không được purge").
+
+---
+
 ## [Unreleased] — 15/11/2026 — Kiến trúc file: KHÔNG stream byte qua Worker + index đọc D1
 
 > Trạng thái: **ĐÃ DEPLOY PRODUCTION** — Worker `alkcloud-api` version `934bd864-9e51-48e8-b6b3-1c381fc35d98`

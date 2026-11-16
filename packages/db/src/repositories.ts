@@ -1022,6 +1022,50 @@ export class Database {
 		return (result.changes ?? 0) > 0;
 	}
 
+	/**
+	 * Thu hồi mọi share còn hoạt động của các file đã cho.
+	 *
+	 * Dùng khi **xoá vĩnh viễn**: share trỏ tới file không còn tồn tại ⇒ link
+	 * chết theo, không để lại link "sống" mà mở ra 404.
+	 *
+	 * Trả về danh sách id share đã thu hồi (để ghi audit). Chia lô 100 id
+	 * để không vượt giới hạn số tham số của SQLite.
+	 */
+	async revokeActiveSharesForFiles(fileIds: Id[], now: string): Promise<Id[]> {
+		if (fileIds.length === 0) return [];
+		const revoked: Id[] = [];
+		for (let offset = 0; offset < fileIds.length; offset += 100) {
+			const batch = fileIds.slice(offset, offset + 100);
+			const placeholders = batch.map(() => '?').join(',');
+			const rows = await this.driver.query<{ id: Id }>(
+				`SELECT id FROM shares WHERE file_id IN (${placeholders}) AND revoked_at IS NULL`,
+				batch,
+			);
+			if (rows.rows.length === 0) continue;
+			await this.driver.run(
+				`UPDATE shares SET revoked_at = ?, updated_at = ?
+				 WHERE file_id IN (${placeholders}) AND revoked_at IS NULL`,
+				[now, now, ...batch],
+			);
+			revoked.push(...rows.rows.map((row) => row.id));
+		}
+		return revoked;
+	}
+
+	/** Danh sách id file nằm trong cây thư mục (kể cả file đã xoá mềm). */
+	async listFileIdsInFolderSubtree(id: Id): Promise<Id[]> {
+		const result = await this.driver.query<{ id: Id }>(
+			`WITH RECURSIVE subtree(id) AS (
+				SELECT id FROM folders WHERE id = ?
+				UNION ALL
+				SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
+			 )
+			 SELECT id FROM files WHERE folder_id IN (SELECT id FROM subtree)`,
+			[id],
+		);
+		return result.rows.map((row) => row.id);
+	}
+
 	async countActiveShares(fileId: Id, now: string): Promise<number> {
 		// Share đã hết hạn cũng phải được tính là "không còn hoạt động" — nếu không,
 		// file bị khoá vĩnh viễn vì share hết hạn không bao giờ bị revoke.
